@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
+import { getStoredUser, storeUser } from "./mfa-db";
 
 export type DemoRole = "patient" | "staff";
 
-type DemoAccount = {
+export type DemoAccount = {
   email: string;
   name: string;
   role: DemoRole;
@@ -31,13 +32,15 @@ export const MAX_MFA_ATTEMPTS = 5;
 export const RESEND_COOLDOWN_MS = 60 * 1000;
 export const HOURLY_EMAIL_LIMIT = 5;
 
+const PATIENT_PASSWORD_HASH =
+  "a92fbb35c06cca2dce6ea07e7b86fe2dc723d7ff1a00f3dafccc643c3b5188f2";
+
 const accounts: DemoAccount[] = [
   {
     email: "patient.demo@testrigor-mail.com",
     name: "Maria Lopez",
     role: "patient",
-    passwordHash:
-      "a92fbb35c06cca2dce6ea07e7b86fe2dc723d7ff1a00f3dafccc643c3b5188f2",
+    passwordHash: PATIENT_PASSWORD_HASH,
   },
   {
     email: "employee.demo@testrigor-mail.com",
@@ -52,9 +55,46 @@ export function getRuntimeEnv(): RuntimeEnv {
   return env as unknown as RuntimeEnv;
 }
 
-export function findAccount(email: string): DemoAccount | undefined {
+export async function findAccount(email: string): Promise<DemoAccount | undefined> {
   const normalized = email.trim().toLowerCase();
-  return accounts.find((account) => account.email === normalized);
+  const demoAccount = accounts.find((account) => account.email === normalized);
+  if (demoAccount) return demoAccount;
+
+  const stored = await getStoredUser(normalized);
+  if (!stored) return undefined;
+  return {
+    email: stored.email,
+    name: stored.name,
+    role: stored.role,
+    passwordHash: stored.password_hash,
+  };
+}
+
+export function createPersonalAccount(email: string): DemoAccount | undefined {
+  const normalized = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return undefined;
+  const localName = normalized.split("@")[0]
+    .split(/[._+-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  return {
+    email: normalized,
+    name: localName || "Demo Patient",
+    role: "patient",
+    passwordHash: PATIENT_PASSWORD_HASH,
+  };
+}
+
+export async function persistAccount(account: DemoAccount): Promise<void> {
+  if (accounts.some((item) => item.email === account.email)) return;
+  await storeUser({
+    email: account.email,
+    name: account.name,
+    role: account.role,
+    password_hash: account.passwordHash,
+    created_at: Date.now(),
+  });
 }
 
 export async function verifyPassword(
@@ -108,7 +148,7 @@ export async function readSession(
 
   try {
     const payload = JSON.parse(base64UrlDecode(encoded)) as SessionPayload;
-    const account = findAccount(payload.email);
+    const account = await findAccount(payload.email);
     if (
       !account ||
       payload.role !== account.role ||

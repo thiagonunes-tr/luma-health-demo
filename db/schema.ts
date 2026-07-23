@@ -19,3 +19,22 @@ export const mfaChallenges = sqliteTable(
     ),
   ],
 );
+
+export const users = sqliteTable("users", {
+  email: text("email").primaryKey(),
+  name: text("name").notNull(),
+  role: text("role", { enum: ["patient", "staff"] }).notNull(),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
+export const demoState = sqliteTable("demo_state", {
+  id: text("id").primaryKey(),
+  stateJson: text("state_json").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const environmentMeta = sqliteTable("environment_meta", {
+  id: text("id").primaryKey(),
+  lastResetAt: integer("last_reset_at").notNull(),
+});

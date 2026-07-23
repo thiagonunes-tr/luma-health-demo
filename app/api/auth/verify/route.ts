@@ -3,8 +3,10 @@ import {
   MAX_MFA_ATTEMPTS,
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
+  createPersonalAccount,
   findAccount,
   hashMfaCode,
+  persistAccount,
   signSession,
 } from "../../../../lib/auth";
 import { ChallengeRecord, getMfaDb } from "../../../../lib/mfa-db";
@@ -82,10 +84,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const account = findAccount(challenge.email);
+    const account = (await findAccount(challenge.email)) ?? createPersonalAccount(challenge.email);
     if (!account || account.role !== challenge.role) {
       return NextResponse.json({ error: "This account is unavailable." }, { status: 401 });
     }
+
+    await persistAccount(account);
 
     const token = await signSession(account);
     const response = NextResponse.json({

@@ -5,6 +5,11 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 type Role = "patient" | "staff";
 type Toast = { title: string; message: string } | null;
 type AuthUser = { email: string; name: string; role: Role };
+type DemoState = {
+  appointmentBooked: boolean;
+  intakeComplete: boolean;
+  refillStatus: "none" | "pending" | "approved";
+};
 type Challenge = {
   id: string;
   destination: string;
@@ -38,6 +43,13 @@ export default function Home() {
     new Intl.DateTimeFormat("en-US", { weekday: "long", day: "numeric", month: "long" })
       .format(new Date(2026, 6, 24)), []);
   const role = user?.role ?? "patient";
+  const displayName = user?.name ?? (role === "patient" ? "Maria Lopez" : "Thiago Nunes");
+  const initials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase())
+    .join("") || "LH";
 
   useEffect(() => {
     let active = true;
@@ -52,6 +64,21 @@ export default function Home() {
       .finally(() => { if (active) setAuthLoading(false); });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    fetch("/api/demo-state", { cache: "no-store" })
+      .then(async response => response.ok ? response.json() as Promise<{ state: DemoState }> : null)
+      .then(data => {
+        if (!active || !data) return;
+        setAppointmentBooked(data.state.appointmentBooked);
+        setIntakeComplete(data.state.intakeComplete);
+        setRefillStatus(data.state.refillStatus);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [user]);
 
   async function startLogin(email: string, password: string) {
     setAuthBusy(true);
@@ -114,20 +141,31 @@ export default function Home() {
     window.setTimeout(() => setToast(null), 3600);
   }
 
+  function persistDemoState(state: DemoState) {
+    void fetch("/api/demo-state", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state),
+    }).catch(() => undefined);
+  }
+
   function bookAppointment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setAppointmentBooked(true);
+    persistDemoState({ appointmentBooked: true, intakeComplete, refillStatus });
     setShowBooking(false);
     notify("Appointment booked", "Your appointment is confirmed for July 24 at 10:30 AM.");
   }
 
   function requestRefill() {
     setRefillStatus("pending");
+    persistDemoState({ appointmentBooked, intakeComplete, refillStatus: "pending" });
     notify("Request submitted", "The clinic team can now review your refill request.");
   }
 
   function approveRefill() {
     setRefillStatus("approved");
+    persistDemoState({ appointmentBooked, intakeComplete, refillStatus: "approved" });
     notify("Refill approved", "The patient will see the update in the portal.");
   }
 
@@ -176,8 +214,8 @@ export default function Home() {
           <div><strong>Need help?</strong><small>Contact our team</small></div>
         </div>
         <button className="sidebar-user" onClick={signOut} aria-label="Sign out">
-          <span className="avatar">{role === "patient" ? "ML" : "TN"}</span>
-          <div><strong>{role === "patient" ? "Maria Lopez" : "Thiago Nunes"}</strong><small>{role === "patient" ? "Demo patient" : "Administrator"}</small></div>
+          <span className="avatar">{initials}</span>
+          <div><strong>{displayName}</strong><small>{role === "patient" ? "Patient" : "Administrator"}</small></div>
           <span className="sign-out">Sign out</span>
         </button>
       </aside>
@@ -190,19 +228,24 @@ export default function Home() {
           <div className="top-actions">
             <button className="icon-button" aria-label="Search">⌕</button>
             <button className="icon-button notification" aria-label="Notifications">♢<span></span></button>
-            <button className="top-user" onClick={signOut} aria-label="Sign out"><span className="avatar">{role === "patient" ? "ML" : "TN"}</span><span><strong>{role === "patient" ? "Maria Lopez" : "Thiago Nunes"}</strong><small>{role === "patient" ? "Patient · Sign out" : "Clinic staff · Sign out"}</small></span></button>
+            <button className="top-user" onClick={signOut} aria-label="Sign out"><span className="avatar">{initials}</span><span><strong>{displayName}</strong><small>{role === "patient" ? "Patient · Sign out" : "Clinic staff · Sign out"}</small></span></button>
           </div>
         </header>
 
         {role === "patient" ? (
           <PatientDashboard
+            patientName={displayName.split(/\s+/)[0] || "there"}
             activeNav={activeNav}
             dateLabel={dateLabel}
             appointmentBooked={appointmentBooked}
             intakeComplete={intakeComplete}
             refillStatus={refillStatus}
             onBook={() => setShowBooking(true)}
-            onCompleteIntake={() => { setIntakeComplete(true); notify("Form completed", "Your answers were saved for your next appointment."); }}
+            onCompleteIntake={() => {
+              setIntakeComplete(true);
+              persistDemoState({ appointmentBooked, intakeComplete: true, refillStatus });
+              notify("Form completed", "Your answers were saved for your next appointment.");
+            }}
             onRequestRefill={requestRefill}
           />
         ) : (
@@ -272,13 +315,13 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
         {!challenge ? <>
           <p className="eyebrow">WELCOME BACK</p>
           <h2>Sign in to Luma Health</h2>
-          <p className="auth-subtitle">Use your patient or employee demo account.</p>
+          <p className="auth-subtitle">Use a demo account, or sign in as a patient with your own email.</p>
           <div className="account-tabs" role="group" aria-label="Choose a demo account">
             <button type="button" className={selectedDemo === "patient" ? "active" : ""} onClick={() => { setSelectedDemo("patient"); setCopiedCredential(null); }}>Patient</button>
             <button type="button" className={selectedDemo === "employee" ? "active" : ""} onClick={() => { setSelectedDemo("employee"); setCopiedCredential(null); }}>Employee</button>
           </div>
           <form className="auth-form" key={selectedDemo} onSubmit={submitLogin} autoComplete="off">
-            <label>Email address<input name="demo-email" type="email" autoComplete="off" placeholder="Enter the demo email" required /></label>
+            <label>Email address<input name="demo-email" type="email" autoComplete="off" placeholder="Enter your email address" required /></label>
             <label>Password<input name="demo-password" type="password" autoComplete="off" placeholder="Enter the demo password" required /></label>
             {error && <p className="auth-error" role="alert">{error}</p>}
             <button className="primary-button auth-submit" type="submit" disabled={busy}>{busy ? "Sending code…" : `Continue as ${credentials.label}`}</button>
@@ -293,7 +336,7 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
               <div><span>Password</span><code>{credentials.password}</code></div>
               <button type="button" onClick={() => void copyCredential("password", credentials.password)}>{copiedCredential === "password" ? "Copied" : "Copy"}</button>
             </div>
-            <p>A real verification code will be sent by email after sign-in.</p>
+            <p>{selectedDemo === "patient" ? "You may replace the demo email with your own. Use the patient demo password; the verification code will be sent to the address entered." : "A real verification code will be sent to the employee demo email after sign-in."}</p>
           </div>
         </> : <>
           <button className="auth-back" type="button" onClick={onBack}>← Back to sign in</button>
@@ -314,7 +357,8 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
   </main>;
 }
 
-function PatientDashboard({ activeNav, dateLabel, appointmentBooked, intakeComplete, refillStatus, onBook, onCompleteIntake, onRequestRefill }: {
+function PatientDashboard({ patientName, activeNav, dateLabel, appointmentBooked, intakeComplete, refillStatus, onBook, onCompleteIntake, onRequestRefill }: {
+  patientName: string;
   activeNav: string;
   dateLabel: string;
   appointmentBooked: boolean;
@@ -326,7 +370,7 @@ function PatientDashboard({ activeNav, dateLabel, appointmentBooked, intakeCompl
 }) {
   return <div className="page-content">
     <div className="welcome-row">
-      <div><p className="eyebrow">PATIENT PORTAL</p><h1>{activeNav === "Overview" ? "Hello, Maria." : activeNav}</h1><p className="subtitle">{activeNav === "Overview" ? "Here is a summary of your care today." : "Keep track of your health information in one place."}</p></div>
+      <div><p className="eyebrow">PATIENT PORTAL</p><h1>{activeNav === "Overview" ? `Hello, ${patientName}.` : activeNav}</h1><p className="subtitle">{activeNav === "Overview" ? "Here is a summary of your care today." : "Keep track of your health information in one place."}</p></div>
       <button className="primary-button" onClick={onBook}><span>＋</span> Book appointment</button>
     </div>
 

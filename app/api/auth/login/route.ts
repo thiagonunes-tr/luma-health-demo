@@ -3,6 +3,7 @@ import {
   HOURLY_EMAIL_LIMIT,
   MFA_TTL_MS,
   RESEND_COOLDOWN_MS,
+  createPersonalAccount,
   createMfaCode,
   findAccount,
   hashMfaCode,
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
 
   const email = typeof body.email === "string" ? body.email : "";
   const password = typeof body.password === "string" ? body.password : "";
-  const account = findAccount(email);
+  const account = (await findAccount(email)) ?? createPersonalAccount(email);
 
   if (!account || !(await verifyPassword(account, password))) {
     return NextResponse.json(
