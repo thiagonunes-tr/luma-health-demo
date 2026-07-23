@@ -31,3 +31,5 @@ npm run lint
 ## Documentation
 
 Read [Developer Handoff](docs/DEVELOPER_HANDOFF.md) before changing authentication, persistence, deployment, or the reset behavior. It documents the complete architecture, data model, operational procedures, known limitations, and recommended next steps.
+
+Read [Requirements Traceability and Implementation Assessment](docs/REQUIREMENTS_TRACEABILITY.md) for a requirement-by-requirement comparison between the original project brief and the current implementation, including agreed adaptations, gaps, and recommended follow-up work.
