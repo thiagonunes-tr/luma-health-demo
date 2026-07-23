@@ -9,23 +9,23 @@ export async function generateMetadata(): Promise<Metadata> {
   const imageUrl = `${protocol}://${host}/og.png`;
 
   return {
-    title: "Luma Saúde | Portal do Paciente",
-    description: "Cuidado simples, conectado e humano.",
+    title: "Luma Health | Patient Portal",
+    description: "Simple, connected, human care.",
     openGraph: {
-      title: "Luma Saúde",
-      description: "Cuidado simples, conectado e humano.",
+      title: "Luma Health",
+      description: "Simple, connected, human care.",
       type: "website",
-      images: [{ url: imageUrl, width: 1734, height: 909, alt: "Portal Luma Saúde" }],
+      images: [{ url: imageUrl, width: 1734, height: 909, alt: "Luma Health patient portal" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "Luma Saúde",
-      description: "Cuidado simples, conectado e humano.",
+      title: "Luma Health",
+      description: "Simple, connected, human care.",
       images: [imageUrl],
     },
   };
 }
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="pt-BR"><body>{children}</body></html>;
+  return <html lang="en"><body>{children}</body></html>;
 }

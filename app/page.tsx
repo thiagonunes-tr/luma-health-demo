@@ -6,17 +6,17 @@ type Role = "patient" | "staff";
 type Toast = { title: string; message: string } | null;
 
 const appointments = [
-  { time: "08:30", patient: "Riley Smith", type: "Consulta de rotina", status: "Confirmada" },
-  { time: "09:15", patient: "Maria Lopez", type: "Acompanhamento", status: "Aguardando" },
-  { time: "10:00", patient: "Alex Carter", type: "Primeira consulta", status: "Confirmada" },
-  { time: "11:30", patient: "Priya Shah", type: "Retorno", status: "Confirmada" },
+  { time: "8:30 AM", patient: "Riley Smith", type: "Routine visit", status: "Confirmed" },
+  { time: "9:15 AM", patient: "Maria Lopez", type: "Follow-up", status: "Waiting" },
+  { time: "10:00 AM", patient: "Alex Carter", type: "First appointment", status: "Confirmed" },
+  { time: "11:30 AM", patient: "Priya Shah", type: "Follow-up", status: "Confirmed" },
 ];
 
-const navItems = ["Visão geral", "Consultas", "Formulários", "Resultados", "Mensagens"];
+const navItems = ["Overview", "Appointments", "Forms", "Results", "Messages"];
 
 export default function Home() {
   const [role, setRole] = useState<Role>("patient");
-  const [activeNav, setActiveNav] = useState("Visão geral");
+  const [activeNav, setActiveNav] = useState("Overview");
   const [showBooking, setShowBooking] = useState(false);
   const [appointmentBooked, setAppointmentBooked] = useState(false);
   const [intakeComplete, setIntakeComplete] = useState(false);
@@ -24,7 +24,7 @@ export default function Home() {
   const [toast, setToast] = useState<Toast>(null);
 
   const dateLabel = useMemo(() =>
-    new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "numeric", month: "long" })
+    new Intl.DateTimeFormat("en-US", { weekday: "long", day: "numeric", month: "long" })
       .format(new Date(2026, 6, 24)), []);
 
   function notify(title: string, message: string) {
@@ -36,30 +36,30 @@ export default function Home() {
     event.preventDefault();
     setAppointmentBooked(true);
     setShowBooking(false);
-    notify("Consulta agendada", "Sua consulta foi confirmada para 24 de julho, às 10:30.");
+    notify("Appointment booked", "Your appointment is confirmed for July 24 at 10:30 AM.");
   }
 
   function requestRefill() {
     setRefillStatus("pending");
-    notify("Solicitação enviada", "A equipe da clínica já pode revisar sua renovação.");
+    notify("Request submitted", "The clinic team can now review your refill request.");
   }
 
   function approveRefill() {
     setRefillStatus("approved");
-    notify("Renovação aprovada", "O paciente receberá a atualização no portal.");
+    notify("Refill approved", "The patient will see the update in the portal.");
   }
 
   return (
     <main className="app-shell">
-      <aside className="sidebar" aria-label="Navegação principal">
+      <aside className="sidebar" aria-label="Main navigation">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true"><i></i><b></b></span>
-          <span>Luma <strong>Saúde</strong></span>
+          <span>Luma <strong>Health</strong></span>
         </div>
 
-        <div className="profile-switcher" aria-label="Trocar perfil de demonstração">
-          <button className={role === "patient" ? "active" : ""} onClick={() => setRole("patient")}>Paciente</button>
-          <button className={role === "staff" ? "active" : ""} onClick={() => setRole("staff")}>Equipe</button>
+        <div className="profile-switcher" aria-label="Switch demo profile">
+          <button className={role === "patient" ? "active" : ""} onClick={() => setRole("patient")}>Patient</button>
+          <button className={role === "staff" ? "active" : ""} onClick={() => setRole("staff")}>Staff</button>
         </div>
 
         <nav>
@@ -72,31 +72,31 @@ export default function Home() {
             >
               <span className="nav-icon" aria-hidden="true">{["⌂", "□", "≡", "＋", "○"][index]}</span>
               {item}
-              {item === "Mensagens" && <span className="nav-badge">2</span>}
+              {item === "Messages" && <span className="nav-badge">2</span>}
             </button>
           ))}
         </nav>
 
         <div className="sidebar-help">
           <span className="help-icon">?</span>
-          <div><strong>Precisa de ajuda?</strong><small>Fale com nossa equipe</small></div>
+          <div><strong>Need help?</strong><small>Contact our team</small></div>
         </div>
         <div className="sidebar-user">
           <span className="avatar">{role === "patient" ? "ML" : "TN"}</span>
-          <div><strong>{role === "patient" ? "Maria Lopez" : "Thiago Nunes"}</strong><small>{role === "patient" ? "Paciente demo" : "Administrador"}</small></div>
+          <div><strong>{role === "patient" ? "Maria Lopez" : "Thiago Nunes"}</strong><small>{role === "patient" ? "Demo patient" : "Administrator"}</small></div>
           <span className="more">•••</span>
         </div>
       </aside>
 
       <section className="workspace">
         <header className="topbar">
-          <button className="mobile-brand" onClick={() => setActiveNav("Visão geral")} aria-label="Voltar à visão geral">
-            <span className="brand-mark small" aria-hidden="true"><i></i><b></b></span>Luma Saúde
+          <button className="mobile-brand" onClick={() => setActiveNav("Overview")} aria-label="Back to overview">
+            <span className="brand-mark small" aria-hidden="true"><i></i><b></b></span>Luma Health
           </button>
           <div className="top-actions">
-            <button className="icon-button" aria-label="Buscar">⌕</button>
-            <button className="icon-button notification" aria-label="Notificações">♢<span></span></button>
-            <div className="top-user"><span className="avatar">{role === "patient" ? "ML" : "TN"}</span><div><strong>{role === "patient" ? "Maria Lopez" : "Thiago Nunes"}</strong><small>{role === "patient" ? "Paciente" : "Equipe clínica"}</small></div></div>
+            <button className="icon-button" aria-label="Search">⌕</button>
+            <button className="icon-button notification" aria-label="Notifications">♢<span></span></button>
+            <div className="top-user"><span className="avatar">{role === "patient" ? "ML" : "TN"}</span><div><strong>{role === "patient" ? "Maria Lopez" : "Thiago Nunes"}</strong><small>{role === "patient" ? "Patient" : "Clinic staff"}</small></div></div>
           </div>
         </header>
 
@@ -108,14 +108,14 @@ export default function Home() {
             intakeComplete={intakeComplete}
             refillStatus={refillStatus}
             onBook={() => setShowBooking(true)}
-            onCompleteIntake={() => { setIntakeComplete(true); notify("Formulário concluído", "Suas respostas foram salvas para a próxima consulta."); }}
+            onCompleteIntake={() => { setIntakeComplete(true); notify("Form completed", "Your answers were saved for your next appointment."); }}
             onRequestRefill={requestRefill}
           />
         ) : (
           <StaffDashboard refillStatus={refillStatus} onApproveRefill={approveRefill} />
         )}
 
-        <nav className="mobile-nav" aria-label="Navegação móvel">
+        <nav className="mobile-nav" aria-label="Mobile navigation">
           {navItems.slice(0, 4).map((item, index) => <button key={item} className={activeNav === item ? "active" : ""} onClick={() => setActiveNav(item)}><span>{["⌂", "□", "≡", "＋"][index]}</span>{item.split(" ")[0]}</button>)}
         </nav>
       </section>
@@ -138,67 +138,67 @@ function PatientDashboard({ activeNav, dateLabel, appointmentBooked, intakeCompl
 }) {
   return <div className="page-content">
     <div className="welcome-row">
-      <div><p className="eyebrow">PORTAL DO PACIENTE</p><h1>{activeNav === "Visão geral" ? "Olá, Maria." : activeNav}</h1><p className="subtitle">{activeNav === "Visão geral" ? "Aqui está um resumo dos seus cuidados hoje." : "Acompanhe suas informações de saúde em um só lugar."}</p></div>
-      <button className="primary-button" onClick={onBook}><span>＋</span> Agendar consulta</button>
+      <div><p className="eyebrow">PATIENT PORTAL</p><h1>{activeNav === "Overview" ? "Hello, Maria." : activeNav}</h1><p className="subtitle">{activeNav === "Overview" ? "Here is a summary of your care today." : "Keep track of your health information in one place."}</p></div>
+      <button className="primary-button" onClick={onBook}><span>＋</span> Book appointment</button>
     </div>
 
     <section className="hero-card">
       <div className="hero-copy">
-        <span className="status-pill"><i></i> PRÓXIMA CONSULTA</span>
-        <p className="hero-date">{appointmentBooked ? "24 de julho" : "Hoje, 24 de julho"}</p>
-        <h2>{appointmentBooked ? "Consulta de acompanhamento" : "Consulta com Dra. Ana Costa"}</h2>
-        <p className="doctor"><span className="doctor-avatar">AC</span><span><strong>Dra. Ana Costa</strong><small>Clínica Geral · Sala 204</small></span></p>
+        <span className="status-pill"><i></i> NEXT APPOINTMENT</span>
+        <p className="hero-date">{appointmentBooked ? "July 24" : "Today, July 24"}</p>
+        <h2>{appointmentBooked ? "Follow-up appointment" : "Appointment with Dr. Ana Costa"}</h2>
+        <p className="doctor"><span className="doctor-avatar">AC</span><span><strong>Dr. Ana Costa</strong><small>Primary Care · Room 204</small></span></p>
       </div>
       <div className="appointment-time">
-        <strong>{appointmentBooked ? "10:30" : "14:30"}</strong><span>horário local</span>
-        <button>Ver detalhes <span>→</span></button>
+        <strong>{appointmentBooked ? "10:30 AM" : "2:30 PM"}</strong><span>local time</span>
+        <button>View details <span>→</span></button>
       </div>
       <div className="hero-decoration" aria-hidden="true"><i></i><b></b><em></em></div>
     </section>
 
-    <div className="section-heading"><div><h2>Ações rápidas</h2><p>O que você gostaria de fazer?</p></div></div>
+    <div className="section-heading"><div><h2>Quick actions</h2><p>What would you like to do?</p></div></div>
     <section className="quick-grid">
-      <QuickCard color="blue" icon="□" title="Agendar consulta" text="Escolha o melhor dia e horário" action="Agendar agora" onClick={onBook} />
-      <QuickCard color="coral" icon="≡" title="Formulário de admissão" text={intakeComplete ? "Formulário enviado com sucesso" : "Leva cerca de 3 minutos"} action={intakeComplete ? "Concluído" : "Preencher formulário"} onClick={onCompleteIntake} done={intakeComplete} />
-      <QuickCard color="mint" icon="↗" title="Renovar medicamento" text={refillStatus === "approved" ? "Renovação aprovada pela clínica" : refillStatus === "pending" ? "Em análise pela equipe" : "Solicite de forma rápida e segura"} action={refillStatus === "approved" ? "Aprovada" : refillStatus === "pending" ? "Em análise" : "Solicitar renovação"} onClick={onRequestRefill} done={refillStatus !== "none"} />
+      <QuickCard color="blue" icon="□" title="Book an appointment" text="Choose the best date and time" action="Book now" onClick={onBook} />
+      <QuickCard color="coral" icon="≡" title="Intake form" text={intakeComplete ? "Form submitted successfully" : "Takes about 3 minutes"} action={intakeComplete ? "Completed" : "Complete form"} onClick={onCompleteIntake} done={intakeComplete} />
+      <QuickCard color="mint" icon="↗" title="Request a refill" text={refillStatus === "approved" ? "Refill approved by the clinic" : refillStatus === "pending" ? "Under staff review" : "Request it quickly and securely"} action={refillStatus === "approved" ? "Approved" : refillStatus === "pending" ? "Under review" : "Request refill"} onClick={onRequestRefill} done={refillStatus !== "none"} />
     </section>
 
     <section className="content-grid">
       <div className="panel activity-panel">
-        <div className="panel-heading"><div><h2>Atividade recente</h2><p>Suas últimas atualizações</p></div><button>Ver todas</button></div>
-        <Activity icon="✓" color="green" title="Resultado disponível" text="Hemograma completo" time="Hoje, 09:42" action="Visualizar" />
-        <Activity icon="↗" color="purple" title={refillStatus === "approved" ? "Renovação aprovada" : "Resumo da consulta"} text={refillStatus === "approved" ? "Losartana 50 mg" : "Consulta de 12 de julho"} time={refillStatus === "approved" ? "Agora" : "12 jul, 16:20"} action="Abrir" />
-        <Activity icon="✉" color="orange" title="Nova mensagem" text="Equipe de atendimento" time="10 jul, 11:15" action="Responder" />
+        <div className="panel-heading"><div><h2>Recent activity</h2><p>Your latest updates</p></div><button>View all</button></div>
+        <Activity icon="✓" color="green" title="Result available" text="Complete blood count" time="Today, 9:42 AM" action="View" />
+        <Activity icon="↗" color="purple" title={refillStatus === "approved" ? "Refill approved" : "Visit summary"} text={refillStatus === "approved" ? "Losartan 50 mg" : "July 12 appointment"} time={refillStatus === "approved" ? "Now" : "Jul 12, 4:20 PM"} action="Open" />
+        <Activity icon="✉" color="orange" title="New message" text="Care team" time="Jul 10, 11:15 AM" action="Reply" />
       </div>
       <aside className="panel care-panel">
-        <div className="care-header"><span className="care-mark">♥</span><div><h2>Seu cuidado em dia</h2><p>Continue assim, Maria!</p></div></div>
+        <div className="care-header"><span className="care-mark">♥</span><div><h2>Your care is on track</h2><p>Keep it up, Maria!</p></div></div>
         <div className="progress-ring"><span>75<small>%</small></span></div>
-        <div className="care-copy"><strong>3 de 4 tarefas concluídas</strong><p>Complete seu formulário antes da próxima consulta.</p></div>
-        <button onClick={onCompleteIntake}>{intakeComplete ? "Tudo pronto" : "Continuar tarefa"} <span>→</span></button>
+        <div className="care-copy"><strong>3 of 4 tasks completed</strong><p>Complete your form before your next appointment.</p></div>
+        <button onClick={onCompleteIntake}>{intakeComplete ? "All set" : "Continue task"} <span>→</span></button>
       </aside>
     </section>
-    <p className="date-note">Dados de demonstração · {dateLabel}</p>
+    <p className="date-note">Demo data · {dateLabel}</p>
   </div>;
 }
 
 function StaffDashboard({ refillStatus, onApproveRefill }: { refillStatus: "none" | "pending" | "approved"; onApproveRefill: () => void }) {
   return <div className="page-content">
-    <div className="welcome-row"><div><p className="eyebrow">PAINEL DA CLÍNICA</p><h1>Bom dia, Thiago.</h1><p className="subtitle">Acompanhe a agenda e as solicitações que precisam de atenção.</p></div><button className="secondary-button">⌕ Buscar paciente</button></div>
+    <div className="welcome-row"><div><p className="eyebrow">CLINIC DASHBOARD</p><h1>Good morning, Thiago.</h1><p className="subtitle">Track today&apos;s schedule and requests that need attention.</p></div><button className="secondary-button">⌕ Search patients</button></div>
     <section className="metric-grid">
-      <Metric value="12" label="Consultas hoje" detail="4 aguardando" tone="blue" />
-      <Metric value={refillStatus === "pending" ? "3" : "2"} label="Renovações pendentes" detail="Revisar solicitações" tone="coral" />
-      <Metric value="5" label="Formulários recebidos" detail="2 novos hoje" tone="mint" />
+      <Metric value="12" label="Appointments today" detail="4 waiting" tone="blue" />
+      <Metric value={refillStatus === "pending" ? "3" : "2"} label="Pending refills" detail="Review requests" tone="coral" />
+      <Metric value="5" label="Forms received" detail="2 new today" tone="mint" />
     </section>
     <section className="staff-layout">
       <div className="panel schedule-panel">
-        <div className="panel-heading"><div><h2>Agenda de hoje</h2><p>Quinta-feira, 24 de julho</p></div><button>Ver agenda</button></div>
-        {appointments.map(item => <div className="schedule-row" key={item.time}><strong>{item.time}</strong><span className="patient-avatar">{item.patient.split(" ").map(n => n[0]).join("")}</span><div><b>{item.patient}</b><small>{item.type}</small></div><span className={`queue-status ${item.status === "Aguardando" ? "waiting" : ""}`}>{item.status}</span><button aria-label={`Abrir prontuário de ${item.patient}`}>→</button></div>)}
+        <div className="panel-heading"><div><h2>Today&apos;s schedule</h2><p>Friday, July 24</p></div><button>View schedule</button></div>
+        {appointments.map(item => <div className="schedule-row" key={item.time}><strong>{item.time}</strong><span className="patient-avatar">{item.patient.split(" ").map(n => n[0]).join("")}</span><div><b>{item.patient}</b><small>{item.type}</small></div><span className={`queue-status ${item.status === "Waiting" ? "waiting" : ""}`}>{item.status}</span><button aria-label={`Open ${item.patient}'s record`}>→</button></div>)}
       </div>
       <div className="panel request-panel">
-        <div className="panel-heading"><div><h2>Solicitações</h2><p>Precisam da sua atenção</p></div><span className="count-badge">{refillStatus === "pending" ? 3 : 2}</span></div>
-        {refillStatus === "pending" && <div className="request-card highlighted"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Renovação · Losartana 50 mg</small></div><span>Agora</span></div><p>Uso contínuo · Última renovação há 30 dias.</p><div className="request-actions"><button className="reject">Recusar</button><button className="approve" onClick={onApproveRefill}>Aprovar</button></div></div>}
-        <div className="request-card"><div className="request-top"><span className="patient-avatar lavender">AC</span><div><strong>Alex Carter</strong><small>Formulário de admissão</small></div><span>12 min</span></div><button className="text-action">Revisar formulário →</button></div>
-        <div className="request-card"><div className="request-top"><span className="patient-avatar peach">PS</span><div><strong>Priya Shah</strong><small>Alteração de consulta</small></div><span>28 min</span></div><button className="text-action">Abrir solicitação →</button></div>
+        <div className="panel-heading"><div><h2>Requests</h2><p>Need your attention</p></div><span className="count-badge">{refillStatus === "pending" ? 3 : 2}</span></div>
+        {refillStatus === "pending" && <div className="request-card highlighted"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · Losartan 50 mg</small></div><span>Now</span></div><p>Ongoing medication · Last refill 30 days ago.</p><div className="request-actions"><button className="reject">Decline</button><button className="approve" onClick={onApproveRefill}>Approve</button></div></div>}
+        <div className="request-card"><div className="request-top"><span className="patient-avatar lavender">AC</span><div><strong>Alex Carter</strong><small>Intake form</small></div><span>12 min</span></div><button className="text-action">Review form →</button></div>
+        <div className="request-card"><div className="request-top"><span className="patient-avatar peach">PS</span><div><strong>Priya Shah</strong><small>Appointment change</small></div><span>28 min</span></div><button className="text-action">Open request →</button></div>
       </div>
     </section>
   </div>;
@@ -217,5 +217,5 @@ function Metric({ value, label, detail, tone }: { value: string; label: string; 
 }
 
 function BookingModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="booking-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Fechar">×</button><p className="eyebrow">NOVA CONSULTA</p><h2 id="booking-title">Encontre um horário</h2><p>Escolha a especialidade e o melhor horário para você.</p><form onSubmit={onSubmit}><label>Especialidade<select defaultValue="Clínica Geral"><option>Clínica Geral</option><option>Cardiologia</option><option>Dermatologia</option></select></label><label>Profissional<select defaultValue="Dra. Ana Costa"><option>Dra. Ana Costa</option><option>Dr. João Lima</option></select></label><fieldset><legend>Horários disponíveis · 24 de julho</legend><div className="time-options"><label><input type="radio" name="time" value="09:00" />09:00</label><label><input type="radio" name="time" value="10:30" defaultChecked />10:30</label><label><input type="radio" name="time" value="15:00" />15:00</label></div></fieldset><button className="primary-button full" type="submit">Confirmar agendamento</button></form></div></div>;
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="booking-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close">×</button><p className="eyebrow">NEW APPOINTMENT</p><h2 id="booking-title">Find a time</h2><p>Choose a specialty and the time that works best for you.</p><form onSubmit={onSubmit}><label>Specialty<select defaultValue="Primary Care"><option>Primary Care</option><option>Cardiology</option><option>Dermatology</option></select></label><label>Provider<select defaultValue="Dr. Ana Costa"><option>Dr. Ana Costa</option><option>Dr. John Lima</option></select></label><fieldset><legend>Available times · July 24</legend><div className="time-options"><label><input type="radio" name="time" value="09:00" />9:00 AM</label><label><input type="radio" name="time" value="10:30" defaultChecked />10:30 AM</label><label><input type="radio" name="time" value="15:00" />3:00 PM</label></div></fieldset><button className="primary-button full" type="submit">Confirm appointment</button></form></div></div>;
 }
