@@ -15,6 +15,7 @@ type Challenge = {
   destination: string;
   email: string;
   password: string;
+  requestedRole?: Role;
 };
 
 const appointments = [
@@ -80,14 +81,14 @@ export default function Home() {
     return () => { active = false; };
   }, [user]);
 
-  async function startLogin(email: string, password: string) {
+  async function startLogin(email: string, password: string, requestedRole?: Role) {
     setAuthBusy(true);
     setAuthError("");
     try {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, role: requestedRole }),
       });
       const data = await response.json() as {
         challengeId?: string;
@@ -97,7 +98,7 @@ export default function Home() {
       if (!response.ok || !data.challengeId || !data.destination) {
         throw new Error(data.error ?? "Sign-in could not be completed.");
       }
-      setChallenge({ id: data.challengeId, destination: data.destination, email, password });
+      setChallenge({ id: data.challengeId, destination: data.destination, email, password, requestedRole });
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Sign-in could not be completed.");
     } finally {
@@ -178,7 +179,7 @@ export default function Home() {
       onLogin={startLogin}
       onVerify={verifyCode}
       onBack={() => { setChallenge(null); setAuthError(""); }}
-      onResend={() => challenge && startLogin(challenge.email, challenge.password)}
+      onResend={() => challenge && startLogin(challenge.email, challenge.password, challenge.requestedRole)}
     />;
   }
 
@@ -249,7 +250,7 @@ export default function Home() {
             onRequestRefill={requestRefill}
           />
         ) : (
-          <StaffDashboard refillStatus={refillStatus} onApproveRefill={approveRefill} />
+          <StaffDashboard staffName={displayName.split(/\s+/)[0] || "there"} refillStatus={refillStatus} onApproveRefill={approveRefill} />
         )}
 
         <nav className="mobile-nav" aria-label="Mobile navigation">
@@ -271,12 +272,13 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
   challenge: Challenge | null;
   busy: boolean;
   error: string;
-  onLogin: (email: string, password: string) => Promise<void>;
+  onLogin: (email: string, password: string, requestedRole?: Role) => Promise<void>;
   onVerify: (code: string) => Promise<void>;
   onBack: () => void;
   onResend: () => void;
 }) {
-  const [selectedAccess, setSelectedAccess] = useState<"patient" | "employee" | "personal">("patient");
+  const [selectedAccess, setSelectedAccess] = useState<"patient" | "employee" | "create">("patient");
+  const [newAccountRole, setNewAccountRole] = useState<Role>("patient");
   const [code, setCode] = useState("");
   const [copiedCredential, setCopiedCredential] = useState<"email" | "password" | null>(null);
   const credentials = selectedAccess === "patient"
@@ -288,7 +290,15 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
   function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    void onLogin(String(form.get("demo-email") ?? ""), String(form.get("demo-password") ?? ""));
+    void onLogin(
+      String(form.get("demo-email") ?? ""),
+      String(form.get("demo-password") ?? ""),
+      selectedAccess === "create"
+        ? newAccountRole
+        : selectedAccess === "employee"
+          ? "staff"
+          : "patient",
+    );
   }
 
   async function copyCredential(type: "email" | "password", value: string) {
@@ -317,17 +327,24 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
         {!challenge ? <>
           <p className="eyebrow">WELCOME BACK</p>
           <h2>Sign in to Luma Health</h2>
-          <p className="auth-subtitle">Use a demo account or create your own patient account.</p>
+          <p className="auth-subtitle">Use a demo account or create a new patient or employee account.</p>
           <div className="account-tabs" role="group" aria-label="Choose an account type">
             <button type="button" className={selectedAccess === "patient" ? "active" : ""} onClick={() => { setSelectedAccess("patient"); setCopiedCredential(null); }}>Patient</button>
             <button type="button" className={selectedAccess === "employee" ? "active" : ""} onClick={() => { setSelectedAccess("employee"); setCopiedCredential(null); }}>Employee</button>
-            <button type="button" className={selectedAccess === "personal" ? "active" : ""} onClick={() => { setSelectedAccess("personal"); setCopiedCredential(null); }}>Personal</button>
+            <button type="button" className={selectedAccess === "create" ? "active" : ""} onClick={() => { setSelectedAccess("create"); setCopiedCredential(null); }}>Create account</button>
           </div>
           <form className="auth-form" key={selectedAccess} onSubmit={submitLogin} autoComplete="off">
             <label>Email address<input name="demo-email" type="email" autoComplete="off" placeholder="Enter your email address" required /></label>
-            <label>Password<input name="demo-password" type="password" autoComplete="off" minLength={selectedAccess === "personal" ? 8 : undefined} placeholder={selectedAccess === "personal" ? "Create or enter your password" : "Enter the demo password"} required /></label>
+            <label>Password<input name="demo-password" type="password" autoComplete="off" minLength={selectedAccess === "create" ? 8 : undefined} placeholder={selectedAccess === "create" ? "Create a password" : "Enter the demo password"} required /></label>
+            {selectedAccess === "create" && <fieldset className="account-role-picker">
+              <legend>Account type</legend>
+              <div>
+                <label className={newAccountRole === "patient" ? "selected" : ""}><input type="radio" name="new-account-role" value="patient" checked={newAccountRole === "patient"} onChange={() => setNewAccountRole("patient")} />Patient</label>
+                <label className={newAccountRole === "staff" ? "selected" : ""}><input type="radio" name="new-account-role" value="staff" checked={newAccountRole === "staff"} onChange={() => setNewAccountRole("staff")} />Employee</label>
+              </div>
+            </fieldset>}
             {error && <p className="auth-error" role="alert">{error}</p>}
-            <button className="primary-button auth-submit" type="submit" disabled={busy}>{busy ? "Sending code…" : credentials ? `Continue as ${credentials.label}` : "Continue with personal email"}</button>
+            <button className="primary-button auth-submit" type="submit" disabled={busy}>{busy ? "Sending code…" : credentials ? `Continue as ${credentials.label}` : "Create account"}</button>
           </form>
           {credentials ? <div className="demo-credentials" aria-label={`${credentials.label} demo credentials`}>
               <div className="demo-credentials-heading"><strong>{credentials.label} demo credentials</strong><span>Copy and paste above</span></div>
@@ -340,10 +357,10 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
                 <button type="button" onClick={() => void copyCredential("password", credentials.password)}>{copiedCredential === "password" ? "Copied" : "Copy"}</button>
               </div>
               <p>A real verification code will be sent by email after sign-in.</p>
-            </div> : <div className="demo-credentials" aria-label="Personal patient account instructions">
-              <div className="demo-credentials-heading"><strong>Personal patient account</strong><span>Password + email code</span></div>
-              <p>New here? Enter your email and choose a password with at least 8 characters. We will create your account after you verify the email code.</p>
-              <p>Returning? Use the same email and password you created before.</p>
+            </div> : <div className="demo-credentials" aria-label="New account instructions">
+              <div className="demo-credentials-heading"><strong>Create a new account</strong><span>Password + email code</span></div>
+              <p>Choose whether you are a patient or employee, then enter your email and create a password with at least 8 characters.</p>
+              <p>Your account will be saved after you verify the code sent to your email.</p>
             </div>}
         </> : <>
           <button className="auth-back" type="button" onClick={onBack}>← Back to sign in</button>
@@ -420,9 +437,9 @@ function PatientDashboard({ patientName, activeNav, dateLabel, appointmentBooked
   </div>;
 }
 
-function StaffDashboard({ refillStatus, onApproveRefill }: { refillStatus: "none" | "pending" | "approved"; onApproveRefill: () => void }) {
+function StaffDashboard({ staffName, refillStatus, onApproveRefill }: { staffName: string; refillStatus: "none" | "pending" | "approved"; onApproveRefill: () => void }) {
   return <div className="page-content">
-    <div className="welcome-row"><div><p className="eyebrow">CLINIC DASHBOARD</p><h1>Good morning, Thiago.</h1><p className="subtitle">Track today&apos;s schedule and requests that need attention.</p></div><button className="secondary-button">⌕ Search patients</button></div>
+    <div className="welcome-row"><div><p className="eyebrow">CLINIC DASHBOARD</p><h1>Good morning, {staffName}.</h1><p className="subtitle">Track today&apos;s schedule and requests that need attention.</p></div><button className="secondary-button">⌕ Search patients</button></div>
     <section className="metric-grid">
       <Metric value="12" label="Appointments today" detail="4 waiting" tone="blue" />
       <Metric value={refillStatus === "pending" ? "3" : "2"} label="Pending refills" detail="Review requests" tone="coral" />

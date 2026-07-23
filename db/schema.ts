@@ -34,7 +34,7 @@ export const pendingUsers = sqliteTable(
     challengeId: text("challenge_id").primaryKey(),
     email: text("email").notNull(),
     name: text("name").notNull(),
-    role: text("role", { enum: ["patient"] }).notNull(),
+    role: text("role", { enum: ["patient", "staff"] }).notNull(),
     passwordHash: text("password_hash").notNull(),
     createdAt: integer("created_at").notNull(),
   },

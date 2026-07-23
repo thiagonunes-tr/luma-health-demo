@@ -19,8 +19,8 @@ The currently implemented product requirements are:
 - One login flow for patients and employees: email, password, then a six-digit email verification code.
 - Real MFA email delivery through Brevo.
 - Two exposed demo accounts whose credentials can be copied from the login screen.
-- Any valid personal email may create a patient account with its own password.
-- A personal-email user is persisted only after successful MFA verification.
+- Any valid email may create a patient or employee account with its own password.
+- A newly registered user is persisted only after successful MFA verification.
 - User accounts survive environment resets.
 - Mutable demo state resets automatically after 24 hours.
 - The UI is hosted on Vercel while the backend and D1 database remain on Cloudflare.
@@ -97,7 +97,7 @@ Vercel is connected to the `main` branch. A push to `main` should trigger a new 
 | `app/globals.css` | Complete application styling and responsive behavior |
 | `app/layout.tsx` | Cloudflare/Vinext HTML shell and social metadata |
 | `app/api/auth/login/route.ts` | Validates credentials, creates MFA challenge, and sends code |
-| `app/api/auth/verify/route.ts` | Verifies MFA, persists new personal users, and creates session |
+| `app/api/auth/verify/route.ts` | Verifies MFA, persists newly registered users, and creates session |
 | `app/api/auth/session/route.ts` | Returns the current signed-in user |
 | `app/api/auth/logout/route.ts` | Clears the session cookie |
 | `app/api/demo-state/route.ts` | Reads and updates the resettable global demo state |
@@ -136,24 +136,25 @@ The two fixed accounts are declared in `lib/auth.ts` and displayed on the login 
 
 The login fields are deliberately blank. Credentials are shown separately with copy buttons to make automated and manual testing straightforward.
 
-### Personal patient accounts
+### New account registration
 
-The **Personal** tab supports both first-time registration and returning-user sign-in. This flow works as follows:
+The **Create account** tab supports first-time registration. This flow works as follows:
 
-1. A new user enters a valid email and chooses a password with at least eight characters.
-2. The backend hashes the proposed password and stores it in `pending_users`, linked to the MFA challenge.
-3. A real MFA code is sent to the entered address.
-4. The permanent user record is created only after the code is verified successfully.
-5. Returning users enter the same email and password they created previously.
-6. Subsequent sign-ins load the permanent user from D1 before sending MFA.
+1. A new user selects **Patient** or **Employee** as the account type.
+2. The user enters a valid email and chooses a password with at least eight characters.
+3. The backend hashes the proposed password and stores it in `pending_users`, linked to the MFA challenge and selected role.
+4. A real MFA code is sent to the entered address.
+5. The permanent user record is created only after the code is verified successfully.
+6. Returning users use the matching Patient or Employee login surface with the email and password they created.
+7. Subsequent sign-ins load the permanent user from D1 before sending MFA.
 
 The display name is derived from the email local part. For example, `alex.smith@example.com` becomes `Alex Smith`.
 
-An arbitrary email can become a patient only. Staff access remains restricted to the fixed employee demo account. Personal users created before this registration flow was introduced retain the earlier shared patient-demo password hash and can continue using `PatientDemo!2026`.
+The selected role controls which dashboard opens after MFA. The fixed employee demo account remains available as a shortcut. Personal users created before this registration flow was introduced retain the earlier shared patient-demo password hash and can continue using `PatientDemo!2026`.
 
 ### Password handling
 
-Passwords are compared as SHA-256 hashes with a constant-time string comparison. New personal accounts store the hash of the password chosen during registration. The plaintext password is never written to D1.
+Passwords are compared as SHA-256 hashes with a constant-time string comparison. New accounts store the hash of the password chosen during registration. The plaintext password is never written to D1.
 
 This design is acceptable only for a controlled demo. It is not a production password architecture: hashes are unsalted and fast, and there is no password confirmation, password reset, account recovery, or identity-provider integration.
 
@@ -212,7 +213,7 @@ An index on `(email, created_at)` supports cooldown and hourly-limit queries.
 
 ### `users`
 
-Stores personal-email users who completed MFA.
+Stores registered patient and employee users who completed MFA.
 
 Important columns:
 
@@ -233,7 +234,7 @@ Important columns:
 - `challenge_id`: primary key matching the MFA challenge
 - `email`
 - `name`
-- `role`: always `patient`
+- `role`: the selected `patient` or `staff` account type
 - `password_hash`
 - `created_at`
 
@@ -297,9 +298,12 @@ Input:
 ```json
 {
   "email": "patient@example.com",
-  "password": "PatientDemo!2026"
+  "password": "chosen-password",
+  "role": "patient"
 }
 ```
+
+`role` is `patient` or `staff`. It is required by the current frontend and determines the role of a new account. Existing accounts must sign in through the matching role option. Older clients that omit it remain compatible and default new registrations to patient.
 
 Success response:
 
@@ -505,13 +509,14 @@ npm run lint
 - Appointment, intake, and refill actions update the UI.
 - Reloading restores the persisted global state.
 
-### Personal email
+### New account registration
 
-- The Personal tab clearly distinguishes new and returning users.
+- The Create account tab is separate from the two demo login options.
+- The user can select Patient or Employee during registration.
 - A new user can choose a password with at least eight characters.
-- The code arrives at that personal email.
+- The code arrives at the entered email.
 - The user is created only after correct MFA.
-- A returning user can sign in with the password created previously.
+- A returning patient or employee can sign in with the password created previously.
 - The derived display name appears in the portal.
 - A second login still works after the environment reset.
 
@@ -539,10 +544,10 @@ npm run lint
 
 ### Demo-only security model
 
-- New personal-email patients can choose individual passwords, but hashes still use unsalted SHA-256.
+- Newly registered patients and employees can choose individual passwords, but hashes still use unsalted SHA-256.
 - Password hashing is plain SHA-256 without a per-user salt or a slow password KDF.
 - Registration and sign-in share one form; there is no password confirmation, password change, password reset, account deletion, or administrative user management.
-- Staff access is a single code-defined account.
+- Any verified email can currently register as an employee; there is no invitation, approval, clinic membership, or staff allowlist.
 - This system is not designed for HIPAA, PHI, or real clinical use.
 
 Before any production healthcare use, replace the authentication model with a vetted identity provider and complete a security, privacy, compliance, logging, retention, and incident-response review.
@@ -574,7 +579,7 @@ Recommended replacement coverage:
 - Unit tests for session signing and expiration.
 - API tests for login throttling, MFA expiration, attempt limits, and replay prevention.
 - API tests proving that reset deletes demo state but preserves users.
-- Browser tests for patient, personal-email, and employee flows.
+- Browser tests for patient demo, employee demo, and new patient/employee registration flows.
 
 ### Build structure
 
@@ -643,9 +648,9 @@ Check that:
 
 This is expected. The current reset is rolling and lazy. It runs on the first state request after 24 elapsed hours.
 
-### Personal email signs in as patient
+### A new account opens the wrong dashboard
 
-This is expected. Personal registration always creates patient users; unknown valid emails cannot create staff users.
+The selected role is saved with the pending MFA registration and becomes permanent after verification. Confirm that the frontend sends `role` as `patient` or `staff`, and that the matching `pending_users` row exists for the challenge.
 
 ## 14. Recommended next steps
 

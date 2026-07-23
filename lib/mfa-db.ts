@@ -25,7 +25,7 @@ export type PendingUserRecord = {
   challenge_id: string;
   email: string;
   name: string;
-  role: "patient";
+  role: "patient" | "staff";
   password_hash: string;
   created_at: number;
 };

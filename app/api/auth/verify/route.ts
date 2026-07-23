@@ -3,7 +3,7 @@ import {
   MAX_MFA_ATTEMPTS,
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
-  createPersonalAccount,
+  createUserAccount,
   findAccount,
   hashMfaCode,
   persistAccount,
@@ -93,9 +93,10 @@ export async function POST(request: NextRequest) {
     if (!account) {
       const pendingUser = await getPendingUser(challengeId);
       if (pendingUser && pendingUser.email === challenge.email) {
-        account = createPersonalAccount(
+        account = createUserAccount(
           pendingUser.email,
           pendingUser.password_hash,
+          pendingUser.role,
         );
       }
     }

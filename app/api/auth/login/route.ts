@@ -3,7 +3,7 @@ import {
   HOURLY_EMAIL_LIMIT,
   MFA_TTL_MS,
   RESEND_COOLDOWN_MS,
-  createPersonalAccount,
+  createUserAccount,
   createMfaCode,
   findAccount,
   hashMfaCode,
@@ -17,7 +17,7 @@ import { getMfaDb } from "../../../../lib/mfa-db";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  let body: { email?: unknown; password?: unknown };
+  let body: { email?: unknown; password?: unknown; role?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -26,6 +26,11 @@ export async function POST(request: NextRequest) {
 
   const email = typeof body.email === "string" ? body.email : "";
   const password = typeof body.password === "string" ? body.password : "";
+  const requestedRole = body.role === "staff"
+    ? "staff"
+    : body.role === "patient"
+      ? "patient"
+      : undefined;
   const existingAccount = await findAccount(email);
   let account = existingAccount;
   let isPendingPersonalAccount = false;
@@ -37,11 +42,19 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    account = createPersonalAccount(email, await hashPassword(password));
+    account = createUserAccount(
+      email,
+      await hashPassword(password),
+      requestedRole ?? "patient",
+    );
     isPendingPersonalAccount = Boolean(account);
   }
 
-  if (!account || (existingAccount && !(await verifyPassword(account, password)))) {
+  if (
+    !account ||
+    (existingAccount && requestedRole && account.role !== requestedRole) ||
+    (existingAccount && !(await verifyPassword(account, password)))
+  ) {
     return NextResponse.json(
       { error: "The email or password is incorrect." },
       { status: 401 },
@@ -110,12 +123,13 @@ export async function POST(request: NextRequest) {
           .prepare(
             `INSERT INTO pending_users
              (challenge_id, email, name, role, password_hash, created_at)
-             VALUES (?, ?, ?, 'patient', ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?)`,
           )
           .bind(
             challengeId,
             account.email,
             account.name,
+            account.role,
             account.passwordHash,
             now,
           ),

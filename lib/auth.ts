@@ -70,9 +70,10 @@ export async function findAccount(email: string): Promise<DemoAccount | undefine
   };
 }
 
-export function createPersonalAccount(
+export function createUserAccount(
   email: string,
   passwordHash = PATIENT_PASSWORD_HASH,
+  role: DemoRole = "patient",
 ): DemoAccount | undefined {
   const normalized = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return undefined;
@@ -84,7 +85,7 @@ export function createPersonalAccount(
   return {
     email: normalized,
     name: localName || "Demo Patient",
-    role: "patient",
+    role,
     passwordHash,
   };
 }
