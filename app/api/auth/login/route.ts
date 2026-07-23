@@ -7,6 +7,7 @@ import {
   createMfaCode,
   findAccount,
   hashMfaCode,
+  hashPassword,
   maskEmail,
   sendMfaEmail,
   verifyPassword,
@@ -25,9 +26,22 @@ export async function POST(request: NextRequest) {
 
   const email = typeof body.email === "string" ? body.email : "";
   const password = typeof body.password === "string" ? body.password : "";
-  const account = (await findAccount(email)) ?? createPersonalAccount(email);
+  const existingAccount = await findAccount(email);
+  let account = existingAccount;
+  let isPendingPersonalAccount = false;
 
-  if (!account || !(await verifyPassword(account, password))) {
+  if (!account) {
+    if (password.length < 8) {
+      return NextResponse.json(
+        { error: "Choose a password with at least 8 characters." },
+        { status: 400 },
+      );
+    }
+    account = createPersonalAccount(email, await hashPassword(password));
+    isPendingPersonalAccount = Boolean(account);
+  }
+
+  if (!account || (existingAccount && !(await verifyPassword(account, password)))) {
     return NextResponse.json(
       { error: "The email or password is incorrect." },
       { status: 401 },
@@ -65,12 +79,15 @@ export async function POST(request: NextRequest) {
     const code = createMfaCode();
     const codeHash = await hashMfaCode(challengeId, code);
 
-    await db.batch([
+    const statements = [
       db
         .prepare(
           "UPDATE mfa_challenges SET consumed_at = ? WHERE email = ? AND consumed_at IS NULL",
         )
         .bind(now, account.email),
+      db
+        .prepare("DELETE FROM pending_users WHERE email = ?")
+        .bind(account.email),
       db
         .prepare(
           `INSERT INTO mfa_challenges
@@ -85,12 +102,35 @@ export async function POST(request: NextRequest) {
           now,
           now + MFA_TTL_MS,
         ),
-    ]);
+    ];
+
+    if (isPendingPersonalAccount) {
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO pending_users
+             (challenge_id, email, name, role, password_hash, created_at)
+             VALUES (?, ?, ?, 'patient', ?, ?)`,
+          )
+          .bind(
+            challengeId,
+            account.email,
+            account.name,
+            account.passwordHash,
+            now,
+          ),
+      );
+    }
+
+    await db.batch(statements);
 
     try {
       await sendMfaEmail(account.email, code, challengeId);
     } catch (error) {
-      await db.prepare("DELETE FROM mfa_challenges WHERE id = ?").bind(challengeId).run();
+      await db.batch([
+        db.prepare("DELETE FROM mfa_challenges WHERE id = ?").bind(challengeId),
+        db.prepare("DELETE FROM pending_users WHERE challenge_id = ?").bind(challengeId),
+      ]);
       throw error;
     }
 

@@ -19,7 +19,7 @@ The currently implemented product requirements are:
 - One login flow for patients and employees: email, password, then a six-digit email verification code.
 - Real MFA email delivery through Brevo.
 - Two exposed demo accounts whose credentials can be copied from the login screen.
-- Any valid personal email may sign in as a patient using the shared patient demo password.
+- Any valid personal email may create a patient account with its own password.
 - A personal-email user is persisted only after successful MFA verification.
 - User accounts survive environment resets.
 - Mutable demo state resets automatically after 24 hours.
@@ -136,25 +136,26 @@ The two fixed accounts are declared in `lib/auth.ts` and displayed on the login 
 
 The login fields are deliberately blank. Credentials are shown separately with copy buttons to make automated and manual testing straightforward.
 
-### Personal-email patients
+### Personal patient accounts
 
-Any syntactically valid email address may be used with the patient demo password. This flow works as follows:
+The **Personal** tab supports both first-time registration and returning-user sign-in. This flow works as follows:
 
-1. The user enters a personal email and `PatientDemo!2026`.
-2. The backend treats an unknown valid email as a prospective patient account.
+1. A new user enters a valid email and chooses a password with at least eight characters.
+2. The backend hashes the proposed password and stores it in `pending_users`, linked to the MFA challenge.
 3. A real MFA code is sent to the entered address.
-4. The user record is created only after the code is verified successfully.
-5. Subsequent sign-ins load the stored user from D1.
+4. The permanent user record is created only after the code is verified successfully.
+5. Returning users enter the same email and password they created previously.
+6. Subsequent sign-ins load the permanent user from D1 before sending MFA.
 
 The display name is derived from the email local part. For example, `alex.smith@example.com` becomes `Alex Smith`.
 
-An arbitrary email can become a patient only. Staff access remains restricted to the fixed employee demo account.
+An arbitrary email can become a patient only. Staff access remains restricted to the fixed employee demo account. Personal users created before this registration flow was introduced retain the earlier shared patient-demo password hash and can continue using `PatientDemo!2026`.
 
 ### Password handling
 
-Passwords are compared as SHA-256 hashes with a constant-time string comparison. Unknown personal-email patients receive the same stored password hash as the fixed patient demo account.
+Passwords are compared as SHA-256 hashes with a constant-time string comparison. New personal accounts store the hash of the password chosen during registration. The plaintext password is never written to D1.
 
-This design is acceptable only for a controlled demo. It is not a production password architecture: there is no unique password enrollment, salt, password reset, account recovery, or identity-provider integration.
+This design is acceptable only for a controlled demo. It is not a production password architecture: hashes are unsalted and fast, and there is no password confirmation, password reset, account recovery, or identity-provider integration.
 
 ### MFA challenge
 
@@ -190,7 +191,7 @@ The Vercel `/api/*` rewrite is important because it keeps the browser-facing API
 
 ## 5. Database model
 
-Cloudflare D1 contains four tables.
+Cloudflare D1 contains five tables.
 
 ### `mfa_challenges`
 
@@ -222,6 +223,21 @@ Important columns:
 - `created_at`
 
 Fixed patient and employee demo accounts are code-defined and are not required in this table.
+
+### `pending_users`
+
+Temporarily stores a proposed personal account while email ownership is being verified.
+
+Important columns:
+
+- `challenge_id`: primary key matching the MFA challenge
+- `email`
+- `name`
+- `role`: always `patient`
+- `password_hash`
+- `created_at`
+
+Starting another registration attempt for the same email replaces the earlier pending record. The record is deleted after successful verification, after an email-delivery failure, or during stale-record cleanup.
 
 ### `demo_state`
 
@@ -491,9 +507,11 @@ npm run lint
 
 ### Personal email
 
-- A valid personal email works with the patient demo password.
+- The Personal tab clearly distinguishes new and returning users.
+- A new user can choose a password with at least eight characters.
 - The code arrives at that personal email.
 - The user is created only after correct MFA.
+- A returning user can sign in with the password created previously.
 - The derived display name appears in the portal.
 - A second login still works after the environment reset.
 
@@ -521,9 +539,9 @@ npm run lint
 
 ### Demo-only security model
 
-- Every personal-email patient uses one shared password.
+- New personal-email patients can choose individual passwords, but hashes still use unsalted SHA-256.
 - Password hashing is plain SHA-256 without a per-user salt or a slow password KDF.
-- There is no registration form, password change, password reset, account deletion, or administrative user management.
+- Registration and sign-in share one form; there is no password confirmation, password change, password reset, account deletion, or administrative user management.
 - Staff access is a single code-defined account.
 - This system is not designed for HIPAA, PHI, or real clinical use.
 
@@ -627,7 +645,7 @@ This is expected. The current reset is rolling and lazy. It runs on the first st
 
 ### Personal email signs in as patient
 
-This is expected. Unknown valid emails cannot create staff users.
+This is expected. Personal registration always creates patient users; unknown valid emails cannot create staff users.
 
 ## 14. Recommended next steps
 
@@ -639,7 +657,7 @@ Suggested priority order for a future developer:
 4. Convert the repository to npm workspaces and simplify Vercel dependency resolution.
 5. Remove unused starter files and rename the root package consistently.
 6. Add structured Worker logging for MFA delivery and reset events without logging codes, passwords, secrets, or sensitive email content.
-7. If requirements move beyond a demo, replace shared-password authentication before adding more product features.
+7. If requirements move beyond a demo, replace the custom password implementation before adding more product features.
 
 ## 15. Safe ownership transfer checklist
 

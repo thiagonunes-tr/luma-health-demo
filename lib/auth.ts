@@ -70,7 +70,10 @@ export async function findAccount(email: string): Promise<DemoAccount | undefine
   };
 }
 
-export function createPersonalAccount(email: string): DemoAccount | undefined {
+export function createPersonalAccount(
+  email: string,
+  passwordHash = PATIENT_PASSWORD_HASH,
+): DemoAccount | undefined {
   const normalized = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return undefined;
   const localName = normalized.split("@")[0]
@@ -82,7 +85,7 @@ export function createPersonalAccount(email: string): DemoAccount | undefined {
     email: normalized,
     name: localName || "Demo Patient",
     role: "patient",
-    passwordHash: PATIENT_PASSWORD_HASH,
+    passwordHash,
   };
 }
 
@@ -101,8 +104,12 @@ export async function verifyPassword(
   account: DemoAccount,
   password: string,
 ): Promise<boolean> {
-  const candidate = await sha256Hex(password);
+  const candidate = await hashPassword(password);
   return constantTimeEqual(candidate, account.passwordHash);
+}
+
+export async function hashPassword(password: string): Promise<string> {
+  return sha256Hex(password);
 }
 
 export function createMfaCode(): string {

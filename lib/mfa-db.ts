@@ -21,6 +21,15 @@ export type UserRecord = {
   created_at: number;
 };
 
+export type PendingUserRecord = {
+  challenge_id: string;
+  email: string;
+  name: string;
+  role: "patient";
+  password_hash: string;
+  created_at: number;
+};
+
 export type DemoState = {
   appointmentBooked: boolean;
   intakeComplete: boolean;
@@ -61,6 +70,17 @@ export async function getMfaDb(): Promise<D1Database> {
         password_hash text NOT NULL,
         created_at integer NOT NULL
       )`),
+      db.prepare(`CREATE TABLE IF NOT EXISTS pending_users (
+        challenge_id text PRIMARY KEY NOT NULL,
+        email text NOT NULL,
+        name text NOT NULL,
+        role text NOT NULL,
+        password_hash text NOT NULL,
+        created_at integer NOT NULL
+      )`),
+      db.prepare(
+        "CREATE INDEX IF NOT EXISTS pending_users_email_idx ON pending_users (email)",
+      ),
       db.prepare(`CREATE TABLE IF NOT EXISTS demo_state (
         id text PRIMARY KEY NOT NULL,
         state_json text NOT NULL,
@@ -96,6 +116,27 @@ export async function storeUser(user: UserRecord): Promise<void> {
     .run();
 }
 
+export async function getPendingUser(
+  challengeId: string,
+): Promise<PendingUserRecord | null> {
+  const db = await getMfaDb();
+  return db
+    .prepare(
+      `SELECT challenge_id, email, name, role, password_hash, created_at
+       FROM pending_users WHERE challenge_id = ?`,
+    )
+    .bind(challengeId)
+    .first<PendingUserRecord>();
+}
+
+export async function deletePendingUser(challengeId: string): Promise<void> {
+  const db = await getMfaDb();
+  await db
+    .prepare("DELETE FROM pending_users WHERE challenge_id = ?")
+    .bind(challengeId)
+    .run();
+}
+
 async function resetEnvironmentIfDue(db: D1Database): Promise<void> {
   const now = Date.now();
   const meta = await db
@@ -118,6 +159,9 @@ async function resetEnvironmentIfDue(db: D1Database): Promise<void> {
       .prepare("UPDATE environment_meta SET last_reset_at = ? WHERE id = 'global'")
       .bind(now),
     db.prepare("DELETE FROM mfa_challenges WHERE expires_at < ?").bind(now),
+    db
+      .prepare("DELETE FROM pending_users WHERE created_at < ?")
+      .bind(now - RESET_INTERVAL_MS),
   ]);
 }
 

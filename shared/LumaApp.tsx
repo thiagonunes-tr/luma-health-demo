@@ -276,12 +276,14 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
   onBack: () => void;
   onResend: () => void;
 }) {
-  const [selectedDemo, setSelectedDemo] = useState<"patient" | "employee">("patient");
+  const [selectedAccess, setSelectedAccess] = useState<"patient" | "employee" | "personal">("patient");
   const [code, setCode] = useState("");
   const [copiedCredential, setCopiedCredential] = useState<"email" | "password" | null>(null);
-  const credentials = selectedDemo === "patient"
+  const credentials = selectedAccess === "patient"
     ? { email: "patient.demo@testrigor-mail.com", password: "PatientDemo!2026", label: "Patient" }
-    : { email: "employee.demo@testrigor-mail.com", password: "EmployeeDemo!2026", label: "Employee" };
+    : selectedAccess === "employee"
+      ? { email: "employee.demo@testrigor-mail.com", password: "EmployeeDemo!2026", label: "Employee" }
+      : null;
 
   function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -315,29 +317,34 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
         {!challenge ? <>
           <p className="eyebrow">WELCOME BACK</p>
           <h2>Sign in to Luma Health</h2>
-          <p className="auth-subtitle">Use a demo account, or sign in as a patient with your own email.</p>
-          <div className="account-tabs" role="group" aria-label="Choose a demo account">
-            <button type="button" className={selectedDemo === "patient" ? "active" : ""} onClick={() => { setSelectedDemo("patient"); setCopiedCredential(null); }}>Patient</button>
-            <button type="button" className={selectedDemo === "employee" ? "active" : ""} onClick={() => { setSelectedDemo("employee"); setCopiedCredential(null); }}>Employee</button>
+          <p className="auth-subtitle">Use a demo account or create your own patient account.</p>
+          <div className="account-tabs" role="group" aria-label="Choose an account type">
+            <button type="button" className={selectedAccess === "patient" ? "active" : ""} onClick={() => { setSelectedAccess("patient"); setCopiedCredential(null); }}>Patient</button>
+            <button type="button" className={selectedAccess === "employee" ? "active" : ""} onClick={() => { setSelectedAccess("employee"); setCopiedCredential(null); }}>Employee</button>
+            <button type="button" className={selectedAccess === "personal" ? "active" : ""} onClick={() => { setSelectedAccess("personal"); setCopiedCredential(null); }}>Personal</button>
           </div>
-          <form className="auth-form" key={selectedDemo} onSubmit={submitLogin} autoComplete="off">
+          <form className="auth-form" key={selectedAccess} onSubmit={submitLogin} autoComplete="off">
             <label>Email address<input name="demo-email" type="email" autoComplete="off" placeholder="Enter your email address" required /></label>
-            <label>Password<input name="demo-password" type="password" autoComplete="off" placeholder="Enter the demo password" required /></label>
+            <label>Password<input name="demo-password" type="password" autoComplete="off" minLength={selectedAccess === "personal" ? 8 : undefined} placeholder={selectedAccess === "personal" ? "Create or enter your password" : "Enter the demo password"} required /></label>
             {error && <p className="auth-error" role="alert">{error}</p>}
-            <button className="primary-button auth-submit" type="submit" disabled={busy}>{busy ? "Sending code…" : `Continue as ${credentials.label}`}</button>
+            <button className="primary-button auth-submit" type="submit" disabled={busy}>{busy ? "Sending code…" : credentials ? `Continue as ${credentials.label}` : "Continue with personal email"}</button>
           </form>
-          <div className="demo-credentials" aria-label={`${credentials.label} demo credentials`}>
-            <div className="demo-credentials-heading"><strong>{credentials.label} demo credentials</strong><span>Copy and paste above</span></div>
-            <div className="credential-row">
-              <div><span>Email</span><code>{credentials.email}</code></div>
-              <button type="button" onClick={() => void copyCredential("email", credentials.email)}>{copiedCredential === "email" ? "Copied" : "Copy"}</button>
-            </div>
-            <div className="credential-row">
-              <div><span>Password</span><code>{credentials.password}</code></div>
-              <button type="button" onClick={() => void copyCredential("password", credentials.password)}>{copiedCredential === "password" ? "Copied" : "Copy"}</button>
-            </div>
-            <p>{selectedDemo === "patient" ? "You may replace the demo email with your own. Use the patient demo password; the verification code will be sent to the address entered." : "A real verification code will be sent to the employee demo email after sign-in."}</p>
-          </div>
+          {credentials ? <div className="demo-credentials" aria-label={`${credentials.label} demo credentials`}>
+              <div className="demo-credentials-heading"><strong>{credentials.label} demo credentials</strong><span>Copy and paste above</span></div>
+              <div className="credential-row">
+                <div><span>Email</span><code>{credentials.email}</code></div>
+                <button type="button" onClick={() => void copyCredential("email", credentials.email)}>{copiedCredential === "email" ? "Copied" : "Copy"}</button>
+              </div>
+              <div className="credential-row">
+                <div><span>Password</span><code>{credentials.password}</code></div>
+                <button type="button" onClick={() => void copyCredential("password", credentials.password)}>{copiedCredential === "password" ? "Copied" : "Copy"}</button>
+              </div>
+              <p>A real verification code will be sent by email after sign-in.</p>
+            </div> : <div className="demo-credentials" aria-label="Personal patient account instructions">
+              <div className="demo-credentials-heading"><strong>Personal patient account</strong><span>Password + email code</span></div>
+              <p>New here? Enter your email and choose a password with at least 8 characters. We will create your account after you verify the email code.</p>
+              <p>Returning? Use the same email and password you created before.</p>
+            </div>}
         </> : <>
           <button className="auth-back" type="button" onClick={onBack}>← Back to sign in</button>
           <div className="mail-icon" aria-hidden="true">✉</div>

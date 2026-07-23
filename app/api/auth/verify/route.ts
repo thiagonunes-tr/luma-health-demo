@@ -9,7 +9,12 @@ import {
   persistAccount,
   signSession,
 } from "../../../../lib/auth";
-import { ChallengeRecord, getMfaDb } from "../../../../lib/mfa-db";
+import {
+  ChallengeRecord,
+  deletePendingUser,
+  getMfaDb,
+  getPendingUser,
+} from "../../../../lib/mfa-db";
 
 export const dynamic = "force-dynamic";
 
@@ -84,12 +89,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const account = (await findAccount(challenge.email)) ?? createPersonalAccount(challenge.email);
+    let account = await findAccount(challenge.email);
+    if (!account) {
+      const pendingUser = await getPendingUser(challengeId);
+      if (pendingUser && pendingUser.email === challenge.email) {
+        account = createPersonalAccount(
+          pendingUser.email,
+          pendingUser.password_hash,
+        );
+      }
+    }
     if (!account || account.role !== challenge.role) {
       return NextResponse.json({ error: "This account is unavailable." }, { status: 401 });
     }
 
     await persistAccount(account);
+    await deletePendingUser(challengeId);
 
     const token = await signSession(account);
     const response = NextResponse.json({

@@ -15,6 +15,13 @@
       "when": 1784770896621,
       "tag": "0001_nasty_taskmaster",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784806193157,
+      "tag": "0002_empty_vin_gonzales",
+      "breakpoints": true
     }
   ]
 }

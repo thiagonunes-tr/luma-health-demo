@@ -28,6 +28,19 @@ export const users = sqliteTable("users", {
   createdAt: integer("created_at").notNull(),
 });
 
+export const pendingUsers = sqliteTable(
+  "pending_users",
+  {
+    challengeId: text("challenge_id").primaryKey(),
+    email: text("email").notNull(),
+    name: text("name").notNull(),
+    role: text("role", { enum: ["patient"] }).notNull(),
+    passwordHash: text("password_hash").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [index("pending_users_email_idx").on(table.email)],
+);
+
 export const demoState = sqliteTable("demo_state", {
   id: text("id").primaryKey(),
   stateJson: text("state_json").notNull(),
