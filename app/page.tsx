@@ -1,9 +1,16 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type Role = "patient" | "staff";
 type Toast = { title: string; message: string } | null;
+type AuthUser = { email: string; name: string; role: Role };
+type Challenge = {
+  id: string;
+  destination: string;
+  email: string;
+  password: string;
+};
 
 const appointments = [
   { time: "8:30 AM", patient: "Riley Smith", type: "Routine visit", status: "Confirmed" },
@@ -15,7 +22,11 @@ const appointments = [
 const navItems = ["Overview", "Appointments", "Forms", "Results", "Messages"];
 
 export default function Home() {
-  const [role, setRole] = useState<Role>("patient");
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [activeNav, setActiveNav] = useState("Overview");
   const [showBooking, setShowBooking] = useState(false);
   const [appointmentBooked, setAppointmentBooked] = useState(false);
@@ -26,6 +37,77 @@ export default function Home() {
   const dateLabel = useMemo(() =>
     new Intl.DateTimeFormat("en-US", { weekday: "long", day: "numeric", month: "long" })
       .format(new Date(2026, 6, 24)), []);
+  const role = user?.role ?? "patient";
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/auth/session", { cache: "no-store" })
+      .then(async response => {
+        if (!response.ok) return null;
+        const data = await response.json() as { user: AuthUser };
+        return data.user;
+      })
+      .then(sessionUser => { if (active) setUser(sessionUser); })
+      .catch(() => undefined)
+      .finally(() => { if (active) setAuthLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  async function startLogin(email: string, password: string) {
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await response.json() as {
+        challengeId?: string;
+        destination?: string;
+        error?: string;
+      };
+      if (!response.ok || !data.challengeId || !data.destination) {
+        throw new Error(data.error ?? "Sign-in could not be completed.");
+      }
+      setChallenge({ id: data.challengeId, destination: data.destination, email, password });
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Sign-in could not be completed.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function verifyCode(code: string) {
+    if (!challenge) return;
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      const response = await fetch("/api/auth/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challengeId: challenge.id, code }),
+      });
+      const data = await response.json() as { user?: AuthUser; error?: string };
+      if (!response.ok || !data.user) {
+        throw new Error(data.error ?? "The code could not be verified.");
+      }
+      setUser(data.user);
+      setChallenge(null);
+      setActiveNav("Overview");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "The code could not be verified.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function signOut() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    setUser(null);
+    setChallenge(null);
+    setAuthError("");
+  }
 
   function notify(title: string, message: string) {
     setToast({ title, message });
@@ -49,6 +131,19 @@ export default function Home() {
     notify("Refill approved", "The patient will see the update in the portal.");
   }
 
+  if (authLoading) return <AuthLoading />;
+  if (!user) {
+    return <AuthScreen
+      challenge={challenge}
+      busy={authBusy}
+      error={authError}
+      onLogin={startLogin}
+      onVerify={verifyCode}
+      onBack={() => { setChallenge(null); setAuthError(""); }}
+      onResend={() => challenge && startLogin(challenge.email, challenge.password)}
+    />;
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Main navigation">
@@ -57,9 +152,8 @@ export default function Home() {
           <span>Luma <strong>Health</strong></span>
         </div>
 
-        <div className="profile-switcher" aria-label="Switch demo profile">
-          <button className={role === "patient" ? "active" : ""} onClick={() => setRole("patient")}>Patient</button>
-          <button className={role === "staff" ? "active" : ""} onClick={() => setRole("staff")}>Staff</button>
+        <div className="role-label" aria-label="Signed-in account type">
+          <span aria-hidden="true">✓</span>{role === "patient" ? "Patient portal" : "Employee access"}
         </div>
 
         <nav>
@@ -81,11 +175,11 @@ export default function Home() {
           <span className="help-icon">?</span>
           <div><strong>Need help?</strong><small>Contact our team</small></div>
         </div>
-        <div className="sidebar-user">
+        <button className="sidebar-user" onClick={signOut} aria-label="Sign out">
           <span className="avatar">{role === "patient" ? "ML" : "TN"}</span>
           <div><strong>{role === "patient" ? "Maria Lopez" : "Thiago Nunes"}</strong><small>{role === "patient" ? "Demo patient" : "Administrator"}</small></div>
-          <span className="more">•••</span>
-        </div>
+          <span className="sign-out">Sign out</span>
+        </button>
       </aside>
 
       <section className="workspace">
@@ -96,7 +190,7 @@ export default function Home() {
           <div className="top-actions">
             <button className="icon-button" aria-label="Search">⌕</button>
             <button className="icon-button notification" aria-label="Notifications">♢<span></span></button>
-            <div className="top-user"><span className="avatar">{role === "patient" ? "ML" : "TN"}</span><div><strong>{role === "patient" ? "Maria Lopez" : "Thiago Nunes"}</strong><small>{role === "patient" ? "Patient" : "Clinic staff"}</small></div></div>
+            <button className="top-user" onClick={signOut} aria-label="Sign out"><span className="avatar">{role === "patient" ? "ML" : "TN"}</span><span><strong>{role === "patient" ? "Maria Lopez" : "Thiago Nunes"}</strong><small>{role === "patient" ? "Patient · Sign out" : "Clinic staff · Sign out"}</small></span></button>
           </div>
         </header>
 
@@ -121,9 +215,85 @@ export default function Home() {
       </section>
 
       {showBooking && <BookingModal onClose={() => setShowBooking(false)} onSubmit={bookAppointment} />}
-      {toast && <div className="toast" role="status"><span>✓</span><div><strong>{toast.title}</strong><p>{toast.message}</p></div><button onClick={() => setToast(null)} aria-label="Fechar">×</button></div>}
+      {toast && <div className="toast" role="status"><span>✓</span><div><strong>{toast.title}</strong><p>{toast.message}</p></div><button onClick={() => setToast(null)} aria-label="Close">×</button></div>}
     </main>
   );
+}
+
+function AuthLoading() {
+  return <main className="auth-shell"><div className="auth-loading" role="status"><span className="brand-mark" aria-hidden="true"><i></i><b></b></span><p>Loading secure access…</p></div></main>;
+}
+
+function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResend }: {
+  challenge: Challenge | null;
+  busy: boolean;
+  error: string;
+  onLogin: (email: string, password: string) => Promise<void>;
+  onVerify: (code: string) => Promise<void>;
+  onBack: () => void;
+  onResend: () => void;
+}) {
+  const [selectedDemo, setSelectedDemo] = useState<"patient" | "employee">("patient");
+  const [code, setCode] = useState("");
+  const credentials = selectedDemo === "patient"
+    ? { email: "patient.demo@testrigor-mail.com", password: "PatientDemo!2026", label: "Patient" }
+    : { email: "employee.demo@testrigor-mail.com", password: "EmployeeDemo!2026", label: "Employee" };
+
+  function submitLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    void onLogin(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
+  }
+
+  function submitCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void onVerify(code);
+  }
+
+  return <main className="auth-shell">
+    <section className="auth-story" aria-label="Luma Health introduction">
+      <div className="auth-brand"><span className="brand-mark" aria-hidden="true"><i></i><b></b></span><span>Luma <strong>Health</strong></span></div>
+      <div className="auth-story-copy">
+        <p className="eyebrow light">SECURE DIGITAL CARE</p>
+        <h1>Healthcare access,<br />made reassuringly simple.</h1>
+        <p>Patients and clinic employees use the same secure sign-in, with an email verification code protecting every account.</p>
+      </div>
+      <div className="security-note"><span>✓</span><div><strong>Two-step verification</strong><small>Your password and a one-time email code protect your account.</small></div></div>
+    </section>
+    <section className="auth-panel">
+      <div className="auth-card">
+        {!challenge ? <>
+          <p className="eyebrow">WELCOME BACK</p>
+          <h2>Sign in to Luma Health</h2>
+          <p className="auth-subtitle">Use your patient or employee demo account.</p>
+          <div className="account-tabs" role="group" aria-label="Choose a demo account">
+            <button type="button" className={selectedDemo === "patient" ? "active" : ""} onClick={() => setSelectedDemo("patient")}>Patient</button>
+            <button type="button" className={selectedDemo === "employee" ? "active" : ""} onClick={() => setSelectedDemo("employee")}>Employee</button>
+          </div>
+          <form className="auth-form" onSubmit={submitLogin}>
+            <label>Email address<input name="email" type="email" autoComplete="username" defaultValue={credentials.email} key={`${selectedDemo}-email`} required /></label>
+            <label>Password<input name="password" type="password" autoComplete="current-password" defaultValue={credentials.password} key={`${selectedDemo}-password`} required /></label>
+            {error && <p className="auth-error" role="alert">{error}</p>}
+            <button className="primary-button auth-submit" type="submit" disabled={busy}>{busy ? "Sending code…" : `Continue as ${credentials.label}`}</button>
+          </form>
+          <div className="demo-hint"><strong>Demo credentials are prefilled</strong><span>Continue to receive a real verification code by email.</span></div>
+        </> : <>
+          <button className="auth-back" type="button" onClick={onBack}>← Back to sign in</button>
+          <div className="mail-icon" aria-hidden="true">✉</div>
+          <p className="eyebrow">CHECK YOUR EMAIL</p>
+          <h2>Enter your verification code</h2>
+          <p className="auth-subtitle">We sent a six-digit code to <strong>{challenge.destination}</strong>. It expires in 10 minutes.</p>
+          <form className="auth-form code-form" onSubmit={submitCode}>
+            <label>Verification code<input className="code-input" name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" placeholder="000000" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} autoFocus required /></label>
+            {error && <p className="auth-error" role="alert">{error}</p>}
+            <button className="primary-button auth-submit" type="submit" disabled={busy || code.length !== 6}>{busy ? "Verifying…" : "Verify and sign in"}</button>
+          </form>
+          <p className="resend-copy">Didn&apos;t receive it? <button type="button" onClick={onResend} disabled={busy}>Send a new code</button></p>
+        </>}
+      </div>
+      <p className="privacy-copy">Protected access · Demo environment · No real patient data</p>
+    </section>
+  </main>;
 }
 
 function PatientDashboard({ activeNav, dateLabel, appointmentBooked, intakeComplete, refillStatus, onBook, onCompleteIntake, onRequestRefill }: {
