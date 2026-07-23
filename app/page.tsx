@@ -235,6 +235,7 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
 }) {
   const [selectedDemo, setSelectedDemo] = useState<"patient" | "employee">("patient");
   const [code, setCode] = useState("");
+  const [copiedCredential, setCopiedCredential] = useState<"email" | "password" | null>(null);
   const credentials = selectedDemo === "patient"
     ? { email: "patient.demo@testrigor-mail.com", password: "PatientDemo!2026", label: "Patient" }
     : { email: "employee.demo@testrigor-mail.com", password: "EmployeeDemo!2026", label: "Employee" };
@@ -242,7 +243,13 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
   function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    void onLogin(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
+    void onLogin(String(form.get("demo-email") ?? ""), String(form.get("demo-password") ?? ""));
+  }
+
+  async function copyCredential(type: "email" | "password", value: string) {
+    await navigator.clipboard.writeText(value);
+    setCopiedCredential(type);
+    window.setTimeout(() => setCopiedCredential(current => current === type ? null : current), 1600);
   }
 
   function submitCode(event: FormEvent<HTMLFormElement>) {
@@ -267,16 +274,27 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
           <h2>Sign in to Luma Health</h2>
           <p className="auth-subtitle">Use your patient or employee demo account.</p>
           <div className="account-tabs" role="group" aria-label="Choose a demo account">
-            <button type="button" className={selectedDemo === "patient" ? "active" : ""} onClick={() => setSelectedDemo("patient")}>Patient</button>
-            <button type="button" className={selectedDemo === "employee" ? "active" : ""} onClick={() => setSelectedDemo("employee")}>Employee</button>
+            <button type="button" className={selectedDemo === "patient" ? "active" : ""} onClick={() => { setSelectedDemo("patient"); setCopiedCredential(null); }}>Patient</button>
+            <button type="button" className={selectedDemo === "employee" ? "active" : ""} onClick={() => { setSelectedDemo("employee"); setCopiedCredential(null); }}>Employee</button>
           </div>
-          <form className="auth-form" onSubmit={submitLogin}>
-            <label>Email address<input name="email" type="email" autoComplete="username" defaultValue={credentials.email} key={`${selectedDemo}-email`} required /></label>
-            <label>Password<input name="password" type="password" autoComplete="current-password" defaultValue={credentials.password} key={`${selectedDemo}-password`} required /></label>
+          <form className="auth-form" key={selectedDemo} onSubmit={submitLogin} autoComplete="off">
+            <label>Email address<input name="demo-email" type="email" autoComplete="off" placeholder="Enter the demo email" required /></label>
+            <label>Password<input name="demo-password" type="password" autoComplete="off" placeholder="Enter the demo password" required /></label>
             {error && <p className="auth-error" role="alert">{error}</p>}
             <button className="primary-button auth-submit" type="submit" disabled={busy}>{busy ? "Sending code…" : `Continue as ${credentials.label}`}</button>
           </form>
-          <div className="demo-hint"><strong>Demo credentials are prefilled</strong><span>Continue to receive a real verification code by email.</span></div>
+          <div className="demo-credentials" aria-label={`${credentials.label} demo credentials`}>
+            <div className="demo-credentials-heading"><strong>{credentials.label} demo credentials</strong><span>Copy and paste above</span></div>
+            <div className="credential-row">
+              <div><span>Email</span><code>{credentials.email}</code></div>
+              <button type="button" onClick={() => void copyCredential("email", credentials.email)}>{copiedCredential === "email" ? "Copied" : "Copy"}</button>
+            </div>
+            <div className="credential-row">
+              <div><span>Password</span><code>{credentials.password}</code></div>
+              <button type="button" onClick={() => void copyCredential("password", credentials.password)}>{copiedCredential === "password" ? "Copied" : "Copy"}</button>
+            </div>
+            <p>A real verification code will be sent by email after sign-in.</p>
+          </div>
         </> : <>
           <button className="auth-back" type="button" onClick={onBack}>← Back to sign in</button>
           <div className="mail-icon" aria-hidden="true">✉</div>
