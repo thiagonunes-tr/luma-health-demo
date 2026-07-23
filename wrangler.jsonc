@@ -1,0 +1,11 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "luma-health-demo",
+  "vars": {
+    "BREVO_SENDER_EMAIL": "lumahealth.testrigordemo@gmail.com",
+    "BREVO_SENDER_NAME": "Luma Health"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
