@@ -11,9 +11,10 @@ type DemoAccount = {
 
 type RuntimeEnv = {
   DB: D1Database;
-  RESEND_API_KEY?: string;
+  BREVO_API_KEY?: string;
+  BREVO_SENDER_EMAIL?: string;
+  BREVO_SENDER_NAME?: string;
   MFA_SESSION_SECRET?: string;
-  MFA_FROM_EMAIL?: string;
 };
 
 type SessionPayload = {
@@ -128,28 +129,32 @@ export async function sendMfaEmail(
   challengeId: string,
 ): Promise<void> {
   const runtime = getRuntimeEnv();
-  const apiKey = requiredSecret("RESEND_API_KEY");
-  const from = runtime.MFA_FROM_EMAIL ?? "Luma Health <mfa@lumahealth.com>";
+  const apiKey = requiredSecret("BREVO_API_KEY");
+  const senderEmail = runtime.BREVO_SENDER_EMAIL;
+  if (!senderEmail) throw new Error("BREVO_SENDER_EMAIL is not configured.");
+  const senderName = runtime.BREVO_SENDER_NAME ?? "Luma Health";
 
-  const response = await fetch("https://api.resend.com/emails", {
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Accept: "application/json",
+      "api-key": apiKey,
       "Content-Type": "application/json",
-      "Idempotency-Key": challengeId,
     },
     body: JSON.stringify({
-      from,
-      to: [recipient],
+      sender: { name: senderName, email: senderEmail },
+      to: [{ email: recipient }],
       subject: `${code} is your Luma Health verification code`,
-      text: `Your Luma Health verification code is ${code}. It expires in 10 minutes. If you did not try to sign in, you can ignore this email.`,
-      html: emailHtml(code),
+      textContent: `Your Luma Health verification code is ${code}. It expires in 10 minutes. If you did not try to sign in, you can ignore this email.`,
+      htmlContent: emailHtml(code),
+      headers: { "Idempotency-Key": challengeId },
+      tags: ["luma-health-mfa"],
     }),
   });
 
   if (!response.ok) {
     const errorBody = await response.text();
-    console.error("Resend rejected an MFA email", response.status, errorBody);
+    console.error("Brevo rejected an MFA email", response.status, errorBody);
     throw new Error("The verification email could not be sent.");
   }
 }
@@ -160,7 +165,7 @@ export function maskEmail(email: string): string {
   return `${visible}${"•".repeat(Math.max(3, local.length - visible.length))}@${domain}`;
 }
 
-function requiredSecret(key: "RESEND_API_KEY" | "MFA_SESSION_SECRET"): string {
+function requiredSecret(key: "BREVO_API_KEY" | "MFA_SESSION_SECRET"): string {
   const value = getRuntimeEnv()[key];
   if (!value) throw new Error(`${key} is not configured.`);
   return value;
