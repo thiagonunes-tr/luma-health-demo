@@ -19,12 +19,13 @@ This assessment covers **Project 3: Health Tech Demo Apps - Thiago**, identified
 | **Implemented** | The requirement is available as a working, testable flow. |
 | **Partial** | The requirement is represented in the UI, but part of the expected interaction or state change is missing. |
 | **Agreed adaptation** | The original requirement was intentionally replaced by a later approved implementation decision. |
+| **Out of scope** | The requirement was explicitly excluded from the accepted QA-training scope. |
 | **Not implemented** | The required workflow is not currently available. |
 | **Intentional extension** | The implementation goes beyond the original scope because of a later product decision. |
 
 ## 3. Executive assessment
 
-The project **partially satisfies the original requirements and successfully delivers the core testRigor demo concept**.
+The project **satisfies the agreed web-based QA-training scope and successfully delivers the core testRigor demo concept**.
 
 The strongest areas are:
 
@@ -37,13 +38,13 @@ The strongest areas are:
 - Persistent demo users and an automatically resetting shared demo state.
 - A frontend hosted on Vercel and an API hosted on Cloudflare Workers.
 
-The most important gaps are:
+The main deliberate scope decisions are:
 
-- No native mobile application.
-- Lab results and visit summaries use deterministic fictional content rather than a clinical records backend.
+- Native iOS and Android applications are out of scope; responsive mobile web is the accepted mobile deliverable.
+- Deterministic fictional lab results and visit summaries are intentional test fixtures, not integrations with a clinical records backend.
 - The original fake-authentication guidance was replaced by real registration, password hashing, sessions, and email MFA.
 
-The project should therefore be described as a **functional demo implementation with agreed platform and authentication adaptations**, not as full literal compliance with every original requirement.
+The project should therefore be described as a **complete QA-training demo for the agreed web scope, with documented platform and authentication adaptations**, not as a production healthcare application.
 
 ## 4. Original demo story
 
@@ -55,12 +56,13 @@ The original health-tech story says:
 The current product demonstrates the main cross-role story:
 
 1. A patient signs in and confirms an email verification code.
-2. The patient books an appointment, completes an intake task, or submits a refill request.
+2. The patient books, reschedules, or cancels an appointment; completes intake; updates insurance; submits a refill request; and messages the clinic.
 3. The shared demo state is stored by the Cloudflare API.
 4. An employee signs in through the employee web experience.
-5. The employee sees the clinic schedule and can approve or decline a pending refill request.
+5. The employee searches patients, reviews the clinic schedule and intake, advances the visit lifecycle, replies to messages, and approves or declines a refill request.
+6. The patient observes the shared updates and can review lab results, visit summaries, and a deterministic CSV export.
 
-This is a credible implementation of the central story, although several supporting workflows remain static or incomplete.
+This is a complete, deterministic implementation of the accepted cross-role QA-training story.
 
 ## 5. Platform requirements
 
@@ -68,12 +70,12 @@ This is a credible implementation of the central story, although several support
 | --- | --- | --- | --- |
 | Desktop Web Patient Portal | The patient portal runs as a responsive React application in desktop browsers. | **Implemented** | Shared UI in `shared/LumaApp.tsx`; production frontend is built from `vercel-frontend/` and hosted on Vercel. |
 | Mobile Web Patient Portal | The same patient portal adapts to smaller browser sizes. | **Implemented** | Responsive layouts and mobile navigation are defined in `app/globals.css`. This follows the original rule that desktop and mobile web should share one application. |
-| Native Mobile Patient App | No iOS or Android application exists. | **Not implemented** | The responsive web application provides mobile browser coverage but is not a native application. |
+| Native Mobile Patient App | No iOS or Android application exists. | **Out of scope** | Native platform coverage was explicitly excluded from the QA-training scope; responsive mobile web is the accepted deliverable. |
 | Windows Desktop Clinic/Admin App | The employee experience is available inside the same web application. | **Agreed adaptation** | A later product decision explicitly replaced the Windows application with employee access in the web application. |
 
 ### Platform conclusion
 
-Desktop web and mobile web are covered. The employee workflow is covered through an approved web adaptation. Native mobile platform coverage remains the clearest unmet platform requirement.
+Desktop web and mobile web are covered. The employee workflow is covered through an approved web adaptation. Native mobile is explicitly out of scope for this QA-training application.
 
 ## 6. Patient functionality
 
@@ -170,7 +172,7 @@ Tests can establish an immediate known starting state through the protected rese
 | --- | --- | --- |
 | Build the smallest believable version for a testRigor demo | The UI is focused, predictable, and uses simple state transitions. | **Implemented** |
 | Keep desktop and mobile web in one responsive product | One shared responsive React UI serves both sizes. | **Implemented** |
-| Use native mobile for platform coverage, not a separate business system | No native application exists. | **Not implemented** |
+| Use native mobile for platform coverage, not a separate business system | Native application delivery was explicitly excluded; responsive mobile web provides the accepted test surface. | **Out of scope** |
 | Use Windows desktop only for employee/internal workflows | The employee workflow is internal, but it was moved to the web by agreement. | **Agreed adaptation** |
 | Use simple role differences rather than a full permission system | Patient and Employee roles open different dashboards. | **Implemented** |
 | Use simple, visible approval statuses | Refill state uses none, pending, approved, and rejected. | **Implemented** | Rejected requests can be submitted again by the patient. |
@@ -210,7 +212,7 @@ Consequently:
 - Users should be instructed not to enter real medical information.
 - No protected health information should be added.
 - Secrets must remain in deployment secret stores and must never be committed.
-- A user-retention or deletion policy should be defined before wider public use.
+- The documented retention and self-service deletion policy must remain visible and be reviewed before any use beyond QA training.
 - Employee self-registration must not be interpreted as production-grade staff authorization.
 
 ## 13. Recommended work to close the main gaps
@@ -230,22 +232,19 @@ Remaining work:
 1. Add provider-injected route-level tests for complete personal-account registration, delivery failure cleanup, and replay races without sending real email.
 2. Add password reset/change only if personal accounts remain part of future scope.
 
-### Priority 4 — Decide native mobile scope
+### Scope decision — Native mobile
 
-Choose one of the following and record the decision:
-
-- Build the small native application described in the original rules.
-- Explicitly remove native mobile from the accepted scope and treat responsive mobile web as the final mobile deliverable.
+Native mobile is explicitly out of scope. Responsive mobile web is the final accepted mobile deliverable for QA training.
 
 ## 14. Final conclusion
 
 The implementation meets the central business-demo objective: it provides a believable health-tech workflow that testRigor can automate across patient and employee experiences.
 
-It does **not** fully implement every platform and feature named in the original document. Its current compliance profile is:
+It implements the accepted QA-training scope while documenting the deliberate adaptations from the original document. Its current compliance profile is:
 
 - **Core demo story:** implemented for the agreed web scope.
 - **Desktop and mobile web:** implemented.
-- **Native mobile:** not implemented.
+- **Native mobile:** explicitly out of scope.
 - **Employee Windows app:** replaced by an approved employee web experience.
 - **Patient and employee feature lists:** implemented for the agreed web adaptation.
 - **MFA and registration:** implemented beyond the original scope.

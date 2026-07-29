@@ -680,23 +680,21 @@ If the demo needs isolated sessions, add an environment or tenant identifier and
 
 ### UI scope
 
-- Several navigation items and secondary buttons are visual placeholders.
-- Dates, clinicians, patients, metrics, and activity entries are hardcoded demo content.
-- Booking does not create a real appointment record.
-- Intake completion stores only a boolean.
-- Refill workflow stores only a four-value status.
+- Dates, clinicians, patients, metrics, clinical documents, and activity entries are deterministic fictional content by design.
+- Appointment, intake, insurance, messaging, refill, patient-search, lab-result, and visit-summary flows are implemented for QA automation, but do not integrate with real clinical systems.
+- Native iOS and Android applications are explicitly out of scope; responsive mobile web is the accepted mobile test surface.
 
 ### Test suite
 
-`npm test` runs deterministic unit coverage for demo actions, role restrictions, refill transitions, and rejected-request resubmission. The GitHub Actions production workflow runs this suite as a release gate before either build and the Worker deploy.
+`npm test` runs deterministic unit coverage for demo actions, role restrictions, workflow transitions, and MFA policies. `npm run test:e2e` runs the serial cross-role browser journey. The GitHub Actions production workflow runs both suites as release gates before either build and the Worker deploy.
 
 Remaining recommended coverage:
 
 - Unit tests for account normalization and name derivation.
 - Unit tests for session signing and expiration.
-- API tests for login throttling, MFA expiration, attempt limits, and replay prevention.
+- Route-level API tests for login throttling and concurrent MFA replay prevention.
 - API tests proving that reset deletes demo state but preserves users.
-- Browser tests for patient demo, employee demo, and new patient/employee registration flows.
+- Browser tests for personal patient/employee registration flows, using an injected email-delivery provider so no real message is sent.
 
 ### Build structure
 
