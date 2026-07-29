@@ -14,6 +14,9 @@
 # testing
 /coverage
 /test-results/
+/.venv-e2e/
+__pycache__/
+*.pyc
 
 # next.js
 /.next/

@@ -16,6 +16,10 @@ import {
   getMfaDb,
   getPendingUser,
 } from "../../../../lib/mfa-db";
+import {
+  getMfaChallengeState,
+  getRemainingMfaAttempts,
+} from "../../../../lib/mfa-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -40,13 +44,27 @@ export async function POST(request: NextRequest) {
       .bind(challengeId)
       .first<ChallengeRecord>();
 
-    if (!challenge || challenge.consumed_at !== null || challenge.expires_at <= Date.now()) {
+    if (!challenge) {
       return NextResponse.json(
         { error: "This verification code has expired. Request a new code." },
         { status: 410 },
       );
     }
-    if (challenge.attempts >= MAX_MFA_ATTEMPTS) {
+    const challengeState = getMfaChallengeState(
+      {
+        attempts: challenge.attempts,
+        expiresAt: challenge.expires_at,
+        consumedAt: challenge.consumed_at,
+      },
+      Date.now(),
+    );
+    if (challengeState === "consumed" || challengeState === "expired") {
+      return NextResponse.json(
+        { error: "This verification code has expired. Request a new code." },
+        { status: 410 },
+      );
+    }
+    if (challengeState === "locked") {
       return NextResponse.json(
         { error: "Too many incorrect attempts. Request a new code." },
         { status: 429 },
@@ -63,7 +81,7 @@ export async function POST(request: NextRequest) {
         )
         .bind(challengeId, MAX_MFA_ATTEMPTS)
         .run();
-      const remaining = MAX_MFA_ATTEMPTS - challenge.attempts - 1;
+      const remaining = getRemainingMfaAttempts(challenge.attempts);
       return NextResponse.json(
         {
           error:

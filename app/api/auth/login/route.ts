@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  HOURLY_EMAIL_LIMIT,
   MFA_TTL_MS,
-  RESEND_COOLDOWN_MS,
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
   createUserAccount,
@@ -17,6 +15,7 @@ import {
   signSession,
   verifyPassword,
 } from "../../../../lib/auth";
+import { evaluateMfaRequest } from "../../../../lib/mfa-policy";
 import { getMfaDb } from "../../../../lib/mfa-db";
 
 export const dynamic = "force-dynamic";
@@ -101,15 +100,25 @@ export async function POST(request: NextRequest) {
       .bind(account.email, now - 60 * 60 * 1000)
       .all<{ created_at: number }>();
 
-    const latest = recent.results[0]?.created_at;
-    if (latest && now - latest < RESEND_COOLDOWN_MS) {
-      const retryAfter = Math.ceil((RESEND_COOLDOWN_MS - (now - latest)) / 1000);
+    const requestDecision = evaluateMfaRequest(
+      recent.results.map(item => item.created_at),
+      now,
+    );
+    if (!requestDecision.allowed && requestDecision.reason === "cooldown") {
       return NextResponse.json(
-        { error: `Please wait ${retryAfter} seconds before requesting another code.` },
-        { status: 429, headers: { "Retry-After": String(retryAfter) } },
+        {
+          error:
+            `Please wait ${requestDecision.retryAfterSeconds} seconds before requesting another code.`,
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(requestDecision.retryAfterSeconds),
+          },
+        },
       );
     }
-    if (recent.results.length >= HOURLY_EMAIL_LIMIT) {
+    if (!requestDecision.allowed) {
       return NextResponse.json(
         { error: "Too many codes were requested. Please try again later." },
         { status: 429 },

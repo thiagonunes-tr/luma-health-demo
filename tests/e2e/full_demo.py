@@ -77,6 +77,11 @@ def download_summary(page: Page) -> None:
 def run_scenario(page: Page) -> None:
   anonymous = page.request.get(f"{BASE_URL}/api/demo-state")
   assert anonymous.status == 401
+  anonymous_delete = page.request.delete(
+    f"{BASE_URL}/api/auth/account",
+    data={"confirmation": "DELETE", "password": "irrelevant"},
+  )
+  assert anonymous_delete.status == 401
 
   sign_in(
     page,
@@ -86,6 +91,15 @@ def run_scenario(page: Page) -> None:
   )
   reset = page.request.delete(f"{BASE_URL}/api/demo-state")
   assert reset.status == 200
+  protected_delete = page.request.delete(
+    f"{BASE_URL}/api/auth/account",
+    data={
+      "confirmation": "DELETE",
+      "password": "PatientDemo!2026",
+    },
+  )
+  assert protected_delete.status == 403
+  assert protected_delete.json()["error"] == "Fixed demo accounts cannot be deleted."
 
   forbidden = page.request.patch(
     f"{BASE_URL}/api/demo-state",
@@ -95,6 +109,11 @@ def run_scenario(page: Page) -> None:
 
   page.reload()
   page.wait_for_load_state("networkidle")
+  page.get_by_role("button", name="Account settings").click()
+  page.get_by_text("Protected demo account", exact=True).wait_for()
+  page.get_by_text("Fixed accounts cannot be deleted").wait_for()
+  page.screenshot(path=ARTIFACTS / "protected-account.png", full_page=True)
+  page.get_by_role("dialog", name="Account settings").get_by_label("Close").click()
   page.get_by_role("button", name="Book appointment", exact=True).click()
   page.locator(".time-options label").filter(has_text="9:00 AM").click()
   page.get_by_role("button", name="Confirm appointment").click()

@@ -130,6 +130,17 @@ export async function storeUser(user: UserRecord): Promise<void> {
     .run();
 }
 
+export async function deleteStoredUser(email: string): Promise<boolean> {
+  const db = await getMfaDb();
+  const normalized = email.trim().toLowerCase();
+  const results = await db.batch([
+    db.prepare("DELETE FROM mfa_challenges WHERE email = ?").bind(normalized),
+    db.prepare("DELETE FROM pending_users WHERE email = ?").bind(normalized),
+    db.prepare("DELETE FROM users WHERE email = ?").bind(normalized),
+  ]);
+  return Boolean(results[2]?.meta.changes);
+}
+
 export async function getPendingUser(
   challengeId: string,
 ): Promise<PendingUserRecord | null> {

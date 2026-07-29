@@ -154,6 +154,7 @@ Brevo is consistent with the original integration exception only while it remain
 | Use predictable demo data | Patient names, appointments, results, and clinical content are predefined demo values. | **Implemented** | The UI uses stable, fake healthcare data. |
 | Make the demo easy to reset | Shared workflow state resets after a rolling 24-hour interval. | **Implemented with limitation** | Reset is checked lazily when demo state is accessed; it is not a scheduled midnight reset. |
 | Preserve registered users | User records are excluded from the 24-hour environment reset. | **Agreed adaptation** | This was a later explicit requirement. |
+| Allow a personal user to delete their account | Account settings requires the current password and exact `DELETE` confirmation, then clears related authentication rows and the session. | **Implemented extension** | Fixed demo accounts are protected and return HTTP `403`. |
 | Reset workflow changes | Appointment, intake, and refill state return to their defaults. | **Implemented** | `resetEnvironmentIfDue` in `lib/mfa-db.ts` clears `demo_state`. |
 | Provide an explicit reset option or endpoint | Fixed demo accounts can call `DELETE /api/demo-state` to restore the default workflow state immediately. | **Implemented** | The endpoint requires an authenticated fixed demo account and preserves users. |
 
@@ -222,10 +223,12 @@ The currently listed patient flows are implemented. Future additions should be d
 
 The repository now contains a serial, deployment-gating Playwright scenario for the deterministic demo accounts and all shared business flows. Retention and Brevo failure behavior are documented in the developer handoff.
 
+MFA policy tests now cover expiration, consumed challenges, attempt locking, remaining-attempt calculation, resend cooldown, and hourly limits. Authenticated self-service account deletion is implemented with password confirmation and demo-account protection.
+
 Remaining work:
 
-1. Add provider-injected API tests for MFA expiration, attempt limits, replay prevention, and personal-account registration without sending real email.
-2. Add an authenticated self-service deletion flow if personal registrations must be supported beyond QA training.
+1. Add provider-injected route-level tests for complete personal-account registration, delivery failure cleanup, and replay races without sending real email.
+2. Add password reset/change only if personal accounts remain part of future scope.
 
 ### Priority 4 — Decide native mobile scope
 

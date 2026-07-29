@@ -37,6 +37,7 @@ Clients and automation tools must preserve this cookie when calling authenticate
 | `POST` | `/api/auth/verify` | Public, with challenge | Verify MFA and create a session |
 | `GET` | `/api/auth/session` | Optional | Return the current user or `null` |
 | `POST` | `/api/auth/logout` | Optional | Clear the session cookie |
+| `DELETE` | `/api/auth/account` | Personal account | Permanently delete the signed-in personal account |
 | `GET` | `/api/demo-state` | Required | Read the shared demo workflow state |
 | `PATCH` | `/api/demo-state` | Required | Apply a role-authorized workflow action |
 | `DELETE` | `/api/demo-state` | Fixed demo account | Reset the shared workflow state |
@@ -200,6 +201,35 @@ Response:
   "ok": true
 }
 ```
+
+### `DELETE /api/auth/account`
+
+Permanently deletes the signed-in personal account after re-authentication:
+
+```json
+{
+  "password": "the-current-password",
+  "confirmation": "DELETE"
+}
+```
+
+The confirmation is case-sensitive. A successful deletion removes the user row, pending registrations, and MFA challenges for that email, then clears the session cookie:
+
+```json
+{
+  "ok": true
+}
+```
+
+The global fictional workflow state is not deleted. Fixed patient and employee demo accounts return HTTP `403` and can never be removed through this endpoint.
+
+| Status | Meaning |
+| --- | --- |
+| `200` | Personal account deleted and session cleared |
+| `400` | Password or exact `DELETE` confirmation is missing |
+| `401` | No valid session or the current password is incorrect |
+| `403` | Attempt to delete a fixed demo account |
+| `404` | The personal account disappeared before deletion completed |
 
 ## Demo-state endpoints
 

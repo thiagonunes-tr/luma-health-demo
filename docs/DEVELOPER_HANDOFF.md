@@ -161,6 +161,12 @@ The display name is derived from the email local part. For example, `alex.smith@
 
 The selected role controls which dashboard opens after MFA. The fixed employee demo account remains available as a shortcut. Personal users created before this registration flow was introduced retain the earlier shared patient-demo password hash and can continue using `PatientDemo!2026`.
 
+### Account deletion
+
+The avatar in the top bar opens **Account settings**. Fixed demo accounts display a protected-account explanation and cannot be deleted. A verified personal account may delete itself only after entering its current password and the exact confirmation `DELETE`.
+
+`DELETE /api/auth/account` revalidates the session and password, deletes the D1 user plus all challenges and pending registrations for the email, and expires the session cookie. It does not reset or alter the shared fictional workflow state.
+
 ### Password handling
 
 Passwords are compared as SHA-256 hashes with a constant-time string comparison. New accounts store the hash of the password chosen during registration. The plaintext password is never written to D1.
@@ -331,10 +337,10 @@ The current policy is intentionally explicit:
 - MFA codes expire after 10 minutes. Expired challenge rows are removed during the rolling environment cleanup.
 - Pending, unverified registrations older than 24 hours are removed during that cleanup. A failed Brevo delivery removes its challenge and pending registration immediately.
 - Signed session cookies expire after 8 hours and contain no password or MFA code.
-- Verified personal accounts are retained indefinitely until an authorized operator deletes them directly from D1. There is currently no self-service or public account-deletion endpoint.
+- Verified personal accounts remain until the user deletes them through authenticated Account settings or an authorized operator removes them directly from D1.
 - Fixed demo accounts are application constants and are not D1 user rows.
 
-Because verified users do not currently expire automatically, the public demo must request fictional information only. Before using the project beyond QA training, add an authenticated deletion workflow or a documented operator deletion schedule and confirm applicable privacy obligations.
+Verified users do not expire automatically, so the public demo must still request fictional information only. For use beyond QA training, define any additional operator retention schedule and confirm applicable privacy obligations.
 
 ## 7. API contract
 
@@ -387,6 +393,10 @@ Always returns HTTP 200. The response contains the current user or `{ "user": nu
 ### `POST /api/auth/logout`
 
 Clears the session cookie.
+
+### `DELETE /api/auth/account`
+
+Requires a valid non-demo session, the current password, and exact `DELETE` confirmation. It removes the personal user, related MFA/pending rows, and session cookie. Fixed demo accounts receive HTTP 403.
 
 ### `GET /api/demo-state`
 
@@ -622,6 +632,8 @@ For deterministic setup, negative-path expectations, cross-role sequencing, and 
 - A returning patient or employee can sign in with the password created previously.
 - The derived display name appears in the portal.
 - A second login still works after the environment reset.
+- A verified personal user can delete the account from Account settings after password and explicit-text confirmation.
+- Fixed demo accounts display a protected state and cannot be deleted.
 
 ### Employee demo
 
@@ -652,7 +664,7 @@ For deterministic setup, negative-path expectations, cross-role sequencing, and 
 
 - Newly registered patients and employees can choose individual passwords, but hashes still use unsalted SHA-256.
 - Password hashing is plain SHA-256 without a per-user salt or a slow password KDF.
-- Registration and sign-in share one form; there is no password confirmation, password change, password reset, account deletion, or administrative user management.
+- Registration and sign-in share one form; there is no password confirmation, password change, password reset, or administrative user management.
 - Any verified email can currently register as an employee; there is no invitation, approval, clinic membership, or staff allowlist.
 - This system is not designed for HIPAA, PHI, or real clinical use.
 

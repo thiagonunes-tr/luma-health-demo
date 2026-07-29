@@ -64,6 +64,7 @@ For complete authentication payloads, response bodies, MFA limits, and status co
 | Request | Allowed role | Result |
 | --- | --- | --- |
 | `GET /api/auth/session` | Anonymous or authenticated | `200` with `{ "user": null }` or the current user |
+| `DELETE /api/auth/account` | Personal account | Requires current password and exact `DELETE`; fixed demos return `403` |
 | `GET /api/demo-state` | Any authenticated role | Returns the current shared state |
 | `PATCH /api/demo-state` with `book-appointment` | Patient | Sets the selected time and changes status to `scheduled` |
 | `PATCH /api/demo-state` with `reschedule-appointment` | Patient | Changes the selected time while status is `scheduled` |
@@ -180,9 +181,12 @@ E2E_MFA_SESSION_SECRET=local-e2e-only-secret \
 The scenario covers:
 
 - Anonymous and role-forbidden API responses.
+- Protected demo-account deletion through both API and Account settings.
 - Patient appointment, intake, insurance, refill, messaging, lab, summary, and CSV flows.
 - Staff patient search, intake review, reply, refill approval, appointment lifecycle, and summary export.
 - Final patient-visible state, invalid-transition handling, and deterministic reset.
+
+The deployment suite deliberately does not create or delete a personal account because doing so requires real Brevo delivery. Personal-account deletion should be exercised in an isolated manual or provider-injected environment; never send test email from the deployment gate.
 
 Screenshots, downloads, the development-server log, and failure traces are written under ignored `test-results/e2e/`. Open a failed `trace.zip` with `python -m playwright show-trace`.
 

@@ -1,6 +1,12 @@
 import { env } from "cloudflare:workers";
 import { getStoredUser, storeUser } from "./mfa-db";
 
+export {
+  HOURLY_EMAIL_LIMIT,
+  MAX_MFA_ATTEMPTS,
+  RESEND_COOLDOWN_MS,
+} from "./mfa-policy";
+
 export type DemoRole = "patient" | "staff";
 
 export type DemoAccount = {
@@ -28,9 +34,6 @@ type SessionPayload = {
 export const SESSION_COOKIE = "luma_session";
 export const SESSION_TTL_SECONDS = 8 * 60 * 60;
 export const MFA_TTL_MS = 10 * 60 * 1000;
-export const MAX_MFA_ATTEMPTS = 5;
-export const RESEND_COOLDOWN_MS = 60 * 1000;
-export const HOURLY_EMAIL_LIMIT = 5;
 
 const PATIENT_PASSWORD_HASH =
   "a92fbb35c06cca2dce6ea07e7b86fe2dc723d7ff1a00f3dafccc643c3b5188f2";

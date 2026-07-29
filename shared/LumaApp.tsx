@@ -94,6 +94,7 @@ export default function Home() {
   const [authError, setAuthError] = useState("");
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [activeNav, setActiveNav] = useState("Overview");
+  const [showAccount, setShowAccount] = useState(false);
   const [showBooking, setShowBooking] = useState(false);
   const [showIntake, setShowIntake] = useState(false);
   const [showInsurance, setShowInsurance] = useState(false);
@@ -463,7 +464,7 @@ export default function Home() {
           <div className="top-actions">
             <button className="icon-button" aria-label="Search"><Icon name="search" size={18} /></button>
             <button className="icon-button notification" aria-label="Notifications"><Icon name="bell" size={18} /><span></span></button>
-            <button className="top-user" onClick={signOut} aria-label="Sign out"><span className="avatar">{initials}</span><span><strong>{displayName}</strong><small>{role === "patient" ? "Patient · Sign out" : "Clinic staff · Sign out"}</small></span></button>
+            <button className="top-user" onClick={() => setShowAccount(true)} aria-label="Account settings"><span className="avatar">{initials}</span><span><strong>{displayName}</strong><small>{role === "patient" ? "Patient · Account settings" : "Clinic staff · Account settings"}</small></span></button>
           </div>
         </header>
 
@@ -534,6 +535,7 @@ export default function Home() {
       {showInsurance && <InsuranceModal insurance={insurance} busy={demoBusy !== null} onClose={() => setShowInsurance(false)} onSubmit={updateInsurance} />}
       {showLabResult && <LabResultModal onClose={() => setShowLabResult(false)} />}
       {showVisitSummary && <VisitSummaryModal onClose={() => setShowVisitSummary(false)} />}
+      {showAccount && <AccountModal user={user} onClose={() => setShowAccount(false)} onDeleted={() => { setShowAccount(false); setUser(null); setActiveNav("Overview"); }} onSignOut={signOut} />}
       {toast && <div className={`toast ${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"}><span><Icon name={toast.tone === "error" ? "alert-circle" : "check"} size={16} /></span><div><strong>{toast.title}</strong><p>{toast.message}</p></div><button onClick={() => setToast(null)} aria-label="Close"><Icon name="close" size={17} /></button></div>}
     </main>
   );
@@ -541,6 +543,50 @@ export default function Home() {
 
 function AuthLoading() {
   return <main className="auth-shell"><div className="auth-loading" role="status"><span className="brand-mark" aria-hidden="true"><i></i><b></b></span><p>Loading secure access…</p></div></main>;
+}
+
+function AccountModal({ user, onClose, onDeleted, onSignOut }: {
+  user: AuthUser;
+  onClose: () => void;
+  onDeleted: () => void;
+  onSignOut: () => Promise<void>;
+}) {
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const fixedDemoAccount = [
+    "patient.demo@testrigor-mail.com",
+    "employee.demo@testrigor-mail.com",
+  ].includes(user.email);
+
+  async function deleteAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/auth/account", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password, confirmation }),
+      });
+      const data = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error ?? "The account could not be deleted.");
+      }
+      onDeleted();
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "The account could not be deleted.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal account-modal" role="dialog" aria-modal="true" aria-labelledby="account-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close" disabled={busy}><Icon name="close" size={18} /></button><p className="eyebrow">ACCOUNT</p><h2 id="account-title">Account settings</h2><p>Manage the signed-in account for this demonstration.</p><dl className="review-details"><div><dt>Name</dt><dd>{user.name}</dd></div><div><dt>Email</dt><dd>{user.email}</dd></div><div><dt>Role</dt><dd>{user.role === "staff" ? "Employee" : "Patient"}</dd></div></dl>{fixedDemoAccount ? <div className="protected-account"><span><Icon name="shield-check" size={18} /></span><div><strong>Protected demo account</strong><p>Fixed accounts cannot be deleted, so shared QA credentials remain available.</p></div></div> : <form className="danger-zone" onSubmit={deleteAccount}><div><strong>Delete account permanently</strong><p>This removes the user, pending registrations, and MFA challenges. Shared fictional workflow data is not affected.</p></div><label>Current password<input type="password" value={password} onChange={event => setPassword(event.target.value)} required /></label><label>Type DELETE to confirm<input value={confirmation} onChange={event => setConfirmation(event.target.value)} autoComplete="off" required /></label>{error && <p className="auth-error" role="alert">{error}</p>}<button className="danger-button full" type="submit" disabled={busy || !password || confirmation !== "DELETE"}>{busy ? "Deleting…" : "Delete my account"}</button></form>}<button className="secondary-button full" onClick={() => void onSignOut()} disabled={busy}>Sign out</button></div></div>;
 }
 
 function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResend }: {
