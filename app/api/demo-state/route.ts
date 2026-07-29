@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readSession, SESSION_COOKIE } from "../../../lib/auth";
-import { DemoState, getDemoState, saveDemoState } from "../../../lib/mfa-db";
+import {
+  isDemoAccount,
+  readSession,
+  SESSION_COOKIE,
+} from "../../../lib/auth";
+import { isDemoStateAction } from "../../../lib/demo-state";
+import {
+  applyDemoStateAction,
+  getDemoState,
+  resetDemoState,
+} from "../../../lib/mfa-db";
 
 export const dynamic = "force-dynamic";
 
@@ -15,31 +24,43 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ state: await getDemoState() });
 }
 
-export async function PUT(request: NextRequest) {
-  if (!(await requireSession(request))) {
+export async function PATCH(request: NextRequest) {
+  const session = await requireSession(request);
+  if (!session) {
     return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   }
 
-  let body: Partial<DemoState>;
+  let body: { action?: unknown };
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid environment state." }, { status: 400 });
+    return NextResponse.json({ error: "Choose a valid demo action." }, { status: 400 });
   }
 
-  if (
-    typeof body.appointmentBooked !== "boolean" ||
-    typeof body.intakeComplete !== "boolean" ||
-    !body.refillStatus ||
-    !["none", "pending", "approved"].includes(body.refillStatus)
-  ) {
-    return NextResponse.json({ error: "Invalid environment state." }, { status: 400 });
+  if (!isDemoStateAction(body.action)) {
+    return NextResponse.json({ error: "Choose a valid demo action." }, { status: 400 });
   }
 
-  const state: DemoState = {
-    appointmentBooked: body.appointmentBooked,
-    intakeComplete: body.intakeComplete,
-    refillStatus: body.refillStatus,
-  };
-  return NextResponse.json({ state: await saveDemoState(state) });
+  const result = await applyDemoStateAction(body.action, session.role);
+  if (!result.ok) {
+    return NextResponse.json(
+      { error: result.error },
+      { status: result.status },
+    );
+  }
+  return NextResponse.json({ state: result.state });
+}
+
+export async function DELETE(request: NextRequest) {
+  const session = await requireSession(request);
+  if (!session) {
+    return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
+  }
+  if (!isDemoAccount(session.email)) {
+    return NextResponse.json(
+      { error: "Only fixed demo accounts can reset the shared environment." },
+      { status: 403 },
+    );
+  }
+  return NextResponse.json({ state: await resetDemoState() });
 }

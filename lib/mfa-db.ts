@@ -1,4 +1,18 @@
 import { env } from "cloudflare:workers";
+import {
+  DEFAULT_DEMO_STATE,
+  DemoActorRole,
+  DemoState,
+  DemoStateAction,
+  DemoTransitionResult,
+  transitionDemoState,
+} from "./demo-state";
+
+export {
+  DEFAULT_DEMO_STATE,
+  type DemoState,
+  type DemoStateAction,
+} from "./demo-state";
 
 let initialized = false;
 
@@ -28,18 +42,6 @@ export type PendingUserRecord = {
   role: "patient" | "staff";
   password_hash: string;
   created_at: number;
-};
-
-export type DemoState = {
-  appointmentBooked: boolean;
-  intakeComplete: boolean;
-  refillStatus: "none" | "pending" | "approved";
-};
-
-export const DEFAULT_DEMO_STATE: DemoState = {
-  appointmentBooked: false,
-  intakeComplete: false,
-  refillStatus: "none",
 };
 
 const RESET_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -178,7 +180,9 @@ export async function getDemoState(): Promise<DemoState> {
     return {
       appointmentBooked: Boolean(state.appointmentBooked),
       intakeComplete: Boolean(state.intakeComplete),
-      refillStatus: ["none", "pending", "approved"].includes(state.refillStatus)
+      refillStatus: ["none", "pending", "approved", "rejected"].includes(
+        state.refillStatus,
+      )
         ? state.refillStatus
         : "none",
     };
@@ -199,4 +203,32 @@ export async function saveDemoState(state: DemoState): Promise<DemoState> {
     .bind(JSON.stringify(state), Date.now())
     .run();
   return state;
+}
+
+export async function applyDemoStateAction(
+  action: DemoStateAction,
+  role: DemoActorRole,
+): Promise<DemoTransitionResult> {
+  const currentState = await getDemoState();
+  const transition = transitionDemoState(currentState, action, role);
+  if (!transition.ok) return transition;
+
+  await saveDemoState(transition.state);
+  return transition;
+}
+
+export async function resetDemoState(): Promise<DemoState> {
+  const db = await getMfaDb();
+  const now = Date.now();
+  await db.batch([
+    db.prepare("DELETE FROM demo_state WHERE id = 'global'"),
+    db
+      .prepare(
+        `INSERT INTO environment_meta (id, last_reset_at)
+         VALUES ('global', ?)
+         ON CONFLICT(id) DO UPDATE SET last_reset_at = excluded.last_reset_at`,
+      )
+      .bind(now),
+  ]);
+  return { ...DEFAULT_DEMO_STATE };
 }

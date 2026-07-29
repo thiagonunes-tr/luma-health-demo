@@ -43,7 +43,6 @@ The most important gaps are:
 - No insurance update workflow.
 - Lab results, provider messages, and visit summaries are visual representations rather than complete workflows.
 - Patient search and intake review are visual representations rather than complete workflows.
-- Refill approval works, but rejection does not.
 - Visit status updates and visit summary exports are not implemented.
 - The original fake-authentication guidance was replaced by real registration, password hashing, sessions, and email MFA.
 
@@ -62,7 +61,7 @@ The current product demonstrates the main cross-role story:
 2. The patient books an appointment, completes an intake task, or submits a refill request.
 3. The shared demo state is stored by the Cloudflare API.
 4. An employee signs in through the employee web experience.
-5. The employee sees the clinic schedule and can approve a pending refill request.
+5. The employee sees the clinic schedule and can approve or decline a pending refill request.
 
 This is a credible implementation of the central story, although several supporting workflows remain static or incomplete.
 
@@ -88,7 +87,7 @@ Desktop web and mobile web are covered. The employee workflow is covered through
 | View lab results | A lab result is displayed in recent activity. | **Partial** | The result is visible, but its action does not open a detailed result page or document. |
 | Update insurance information | No editable insurance workflow is present. | **Not implemented** | No insurance form, API state, or confirmation flow exists. |
 | Message provider | Messages appear in navigation and as a notification count. | **Partial** | There is no message list, conversation, compose action, or submitted-message state. |
-| Request prescription refill | The patient can submit a refill request and see pending or approved status. | **Implemented** | `requestRefill` in `shared/LumaApp.tsx`; shared state uses `refillStatus`. |
+| Request prescription refill | The patient can submit a refill request and see pending, approved, or rejected status. A rejected request can be submitted again. | **Implemented** | Role-authorized actions persist through `/api/demo-state`; shared state uses `refillStatus`. |
 | View visit summary | A visit summary entry is displayed in recent activity. | **Partial** | The summary is visible, but the Open action does not display a summary screen or document. |
 
 ## 7. Employee functionality
@@ -98,7 +97,7 @@ Desktop web and mobile web are covered. The employee workflow is covered through
 | Search patient | A Search patients button is visible. | **Partial** | The button does not open a search interface or return predictable patient results. |
 | Review appointment queue | The clinic dashboard displays schedule metrics and a list of appointments with statuses. | **Implemented** | `StaffDashboard` renders the current schedule and appointment status badges. |
 | Review intake form | An intake-form request is displayed with a Review form action. | **Partial** | The action does not open the patient's submitted intake information. |
-| Approve/reject refill request | Staff can approve a pending refill. A Decline button is displayed. | **Partial** | Approval changes shared state; the Decline button has no state-changing handler. |
+| Approve/reject refill request | Staff can approve or decline a pending refill and the resulting state is visible to the patient. | **Implemented** | `approve-refill` and `decline-refill` are staff-only API actions. |
 | Update visit status | No employee action changes a visit status. | **Not implemented** | Appointment status badges are static. |
 | Export visit summary | No export or download action exists. | **Not implemented** | There is no CSV, PDF, or mock download confirmation. |
 
@@ -159,13 +158,13 @@ Brevo is consistent with the original integration exception only while it remain
 | Make the demo easy to reset | Shared workflow state resets after a rolling 24-hour interval. | **Implemented with limitation** | Reset is checked lazily when demo state is accessed; it is not a scheduled midnight reset. |
 | Preserve registered users | User records are excluded from the 24-hour environment reset. | **Agreed adaptation** | This was a later explicit requirement. |
 | Reset workflow changes | Appointment, intake, and refill state return to their defaults. | **Implemented** | `resetEnvironmentIfDue` in `lib/mfa-db.ts` clears `demo_state`. |
-| Provide an explicit reset option or endpoint | No user-facing reset button or dedicated reset endpoint exists. | **Not implemented** | The current reset is automatic only. |
+| Provide an explicit reset option or endpoint | Fixed demo accounts can call `DELETE /api/demo-state` to restore the default workflow state immediately. | **Implemented** | The endpoint requires an authenticated fixed demo account and preserves users. |
 
 ### Current reset behavior
 
 The reset is global, not per user. After 24 hours have elapsed, the next demo-state read or write clears the shared appointment, intake, and refill state. Registered users remain available. Expired MFA challenges and stale pending registrations are cleaned up.
 
-This satisfies the desired automatic cleanup behavior, but tests that require an immediate known starting state would benefit from a protected reset endpoint.
+Tests can establish an immediate known starting state through the protected reset endpoint before exercising patient and employee flows.
 
 ## 10. Build-rule assessment
 
@@ -176,7 +175,7 @@ This satisfies the desired automatic cleanup behavior, but tests that require an
 | Use native mobile for platform coverage, not a separate business system | No native application exists. | **Not implemented** |
 | Use Windows desktop only for employee/internal workflows | The employee workflow is internal, but it was moved to the web by agreement. | **Agreed adaptation** |
 | Use simple role differences rather than a full permission system | Patient and Employee roles open different dashboards. | **Implemented** |
-| Use simple, visible approval statuses | Refill state uses none, pending, and approved. | **Partial** | Rejected is missing. |
+| Use simple, visible approval statuses | Refill state uses none, pending, approved, and rejected. | **Implemented** | Rejected requests can be submitted again by the patient. |
 | Use local or mock APIs instead of unstable external business APIs | Business state and authentication use first-party API routes on the Worker. | **Implemented** |
 | Avoid dependence on outside services | Core UI and state are controlled by the project; email MFA depends on Brevo. | **Partial** |
 | Use only useful demo errors | Invalid credentials, role mismatch, invalid/expired MFA, duplicate account, and rate-limit errors are represented. | **Implemented** |
@@ -220,11 +219,10 @@ Consequently:
 
 ### Priority 1 — Complete the cross-role demo
 
-1. Make **Decline** change the refill status to `rejected`.
-2. Open the submitted intake form from the employee dashboard.
-3. Add a simple, deterministic patient search.
-4. Add an employee action to update visit status.
-5. Add a lightweight visit-summary export with a small PDF, CSV, or predictable download confirmation.
+1. Open the submitted intake form from the employee dashboard.
+2. Add a simple, deterministic patient search.
+3. Add an employee action to update visit status.
+4. Add a lightweight visit-summary export with a small PDF, CSV, or predictable download confirmation.
 
 ### Priority 2 — Complete the patient feature set
 
@@ -236,10 +234,9 @@ Consequently:
 
 ### Priority 3 — Improve test control and safety
 
-1. Add a protected reset endpoint for deterministic test setup.
-2. Define retention and deletion behavior for registered users.
-3. Add automated end-to-end tests for patient registration, employee registration, MFA, appointment booking, refill request, approval, rejection, and reset.
-4. Document the behavior when Brevo is unavailable.
+1. Define retention and deletion behavior for registered users.
+2. Add automated end-to-end tests for patient registration, employee registration, MFA, appointment booking, refill request, approval, rejection, and reset.
+3. Document the behavior when Brevo is unavailable.
 
 ### Priority 4 — Decide native mobile scope
 

@@ -113,6 +113,8 @@ GitHub Actions also validates both build targets and deploys the Cloudflare Work
 | `wrangler.jsonc` | Worker name, non-secret variables, and observability |
 | `.openai/hosting.json` | Logical Sites project and D1 binding metadata |
 | `.github/workflows/deploy.yml` | Validates both builds and deploys the Worker from `main` |
+| `docs/API_REFERENCE.md` | Complete HTTP API contract, payloads, responses, and status codes |
+| `docs/QA_AUTOMATION.md` | Deterministic QA setup, automation contracts, and test isolation |
 | `vercel-frontend/` | Vite entry point and frontend-specific build configuration |
 | `vercel.json` | Canonical Vercel build, output, and proxy configuration |
 
@@ -188,7 +190,7 @@ After MFA succeeds, the backend issues the `luma_session` cookie.
 Cookie behavior:
 
 - HTTP-only
-- Secure
+- Secure on HTTPS deployments; omitted for local HTTP development so browser automation can preserve the session
 - SameSite `Lax`
 - Available to the entire site
 - Eight-hour expiration
@@ -261,6 +263,8 @@ Contains one global row with ID `global`. `state_json` currently stores:
 
 This state is global, not per user. A change made by one signed-in user is visible to other signed-in users after they reload the state.
 
+`refillStatus` supports `none`, `pending`, `approved`, and `rejected`.
+
 ### `environment_meta`
 
 Contains the timestamp used to decide when the demo environment should reset. The current row ID is `global`.
@@ -292,11 +296,15 @@ Current behavior:
 
 Important operational detail: this is a **lazy rolling reset**, not a scheduled midnight reset. If no one accesses the app after the 24-hour mark, the reset occurs on the first later demo-state request.
 
+For deterministic test setup, a fixed demo account can call `DELETE /api/demo-state`. This clears the shared workflow state immediately, updates the reset timestamp, and does not delete registered users.
+
 To change the interval, update `RESET_INTERVAL_MS` in `lib/mfa-db.ts`.
 
 To implement a fixed daily reset time, add a Cloudflare Cron Trigger and move the reset operation into a scheduled Worker handler. Do not delete the `users` table.
 
 ## 7. API contract
+
+This section summarizes the available routes. See [API Reference](./API_REFERENCE.md) for complete payloads, response examples, status codes, and command-line usage.
 
 ### `POST /api/auth/login`
 
@@ -340,7 +348,7 @@ Success returns the user and sets the session cookie.
 
 ### `GET /api/auth/session`
 
-Returns the current signed-in user or HTTP 401.
+Always returns HTTP 200. The response contains the current user or `{ "user": null }` when no valid session exists. This keeps the initial browser session probe from producing an expected 401 in automation logs.
 
 ### `POST /api/auth/logout`
 
@@ -350,11 +358,26 @@ Clears the session cookie.
 
 Requires a valid session. Applies the reset check and returns the current global state.
 
-### `PUT /api/demo-state`
+### `PATCH /api/demo-state`
 
-Requires a valid session. Accepts the complete state object and overwrites the global state.
+Requires a valid session and accepts one role-authorized action:
 
-This endpoint currently uses last-write-wins semantics and has no optimistic concurrency control.
+- Patient: `book-appointment`, `complete-intake`, `request-refill`
+- Staff: `approve-refill`, `decline-refill`
+
+Example:
+
+```json
+{
+  "action": "request-refill"
+}
+```
+
+The response returns the complete persisted state. Invalid role/action combinations return HTTP 403, and invalid workflow transitions return HTTP 409.
+
+### `DELETE /api/demo-state`
+
+Requires a valid session belonging to one of the two fixed demo accounts. It immediately restores `DEFAULT_DEMO_STATE` for deterministic automation setup while preserving users.
 
 ## 8. Environment variables and secrets
 
@@ -458,6 +481,7 @@ A push or merge to `main` starts two deployment paths for the same commit:
 2. The `Validate and deploy` GitHub Actions workflow:
    - installs dependencies with `npm ci`;
    - runs `npm run lint`;
+   - runs deterministic unit tests with `npm test`;
    - builds the Cloudflare/Vinext application;
    - builds the Vercel frontend as a second validation;
    - deploys the generated Worker with `cloudflare/wrangler-action`.
@@ -534,7 +558,10 @@ Run this checklist after authentication, database, proxy, or deployment changes.
 npm run build
 npm --prefix vercel-frontend run build
 npm run lint
+npm test
 ```
+
+For deterministic setup, negative-path expectations, cross-role sequencing, and parallelism constraints, see the [QA Automation Guide](./QA_AUTOMATION.md).
 
 ### Patient demo
 
@@ -564,7 +591,7 @@ npm run lint
 - Employee credentials can be copied.
 - MFA is delivered to the employee demo email.
 - Employee access opens the clinic dashboard.
-- Staff can observe and approve a pending refill in the shared state.
+- Staff can observe, approve, or decline a pending refill in the shared state.
 
 ### Reset
 
@@ -594,8 +621,7 @@ Before any production healthcare use, replace the authentication model with a ve
 ### Global demo state
 
 - All users share one state row.
-- Concurrent updates are last-write-wins.
-- The frontend sends the complete state object on every update.
+- Action updates are read-modify-write and do not provide transaction-level isolation across simultaneous Worker requests.
 - The reset is access-triggered rather than scheduled.
 
 If the demo needs isolated sessions, add an environment or tenant identifier and key `demo_state` by that identifier.
@@ -606,13 +632,13 @@ If the demo needs isolated sessions, add an environment or tenant identifier and
 - Dates, clinicians, patients, metrics, and activity entries are hardcoded demo content.
 - Booking does not create a real appointment record.
 - Intake completion stores only a boolean.
-- Refill workflow stores only a three-value status.
+- Refill workflow stores only a four-value status.
 
 ### Test suite
 
-`tests/rendered-html.test.mjs` still targets the original starter loading skeleton and is obsolete. `npm test` should not be used as a release gate until these tests are replaced.
+`npm test` runs deterministic unit coverage for demo actions, role restrictions, refill transitions, and rejected-request resubmission. The GitHub Actions production workflow runs this suite as a release gate before either build and the Worker deploy.
 
-Recommended replacement coverage:
+Remaining recommended coverage:
 
 - Unit tests for account normalization and name derivation.
 - Unit tests for session signing and expiration.
@@ -695,7 +721,7 @@ The selected role is saved with the pending MFA registration and becomes permane
 
 Suggested priority order for a future developer:
 
-1. Replace the obsolete starter test suite with authentication and reset tests.
+1. Add API-level authentication, MFA-expiration, and reset integration tests.
 2. Add a Cloudflare Cron Trigger if reset must happen at a fixed daily time.
 3. Decide whether demo state should remain global or become isolated per test run/user.
 4. Convert the repository to npm workspaces and simplify Vercel dependency resolution.

@@ -60,6 +60,18 @@ export function isDemoAccount(email: string): boolean {
   return accounts.some((account) => account.email === normalized);
 }
 
+export function isSecureRequest(request: {
+  url: string;
+  headers: Headers;
+}): boolean {
+  const forwardedProtocol = request.headers
+    .get("x-forwarded-proto")
+    ?.split(",")[0]
+    .trim();
+  if (forwardedProtocol) return forwardedProtocol === "https";
+  return new URL(request.url).protocol === "https:";
+}
+
 export async function findAccount(email: string): Promise<DemoAccount | undefined> {
   const normalized = email.trim().toLowerCase();
   const demoAccount = accounts.find((account) => account.email === normalized);

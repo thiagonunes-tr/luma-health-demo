@@ -11,6 +11,7 @@ import {
   hashMfaCode,
   hashPassword,
   isDemoAccount,
+  isSecureRequest,
   maskEmail,
   sendMfaEmail,
   signSession,
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
     });
     response.cookies.set(SESSION_COOKIE, token, {
       httpOnly: true,
-      secure: true,
+      secure: isSecureRequest(request),
       sameSite: "lax",
       path: "/",
       maxAge: SESSION_TTL_SECONDS,

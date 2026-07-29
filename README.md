@@ -18,7 +18,7 @@ The Vercel frontend proxies `/api/*` to the Cloudflare Worker. The Worker remain
 A push or merge to `main` publishes both production targets from the same commit:
 
 - The Vercel Git integration builds and publishes `vercel-frontend`.
-- GitHub Actions runs lint, builds both targets, and deploys the Cloudflare Worker.
+- GitHub Actions runs lint and unit tests, builds both targets, and deploys the Cloudflare Worker.
 
 The workflow is defined in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). It can also be started manually from the repository's **Actions** tab.
 
@@ -42,10 +42,15 @@ Build and validate both deployment targets:
 npm run build
 npm --prefix vercel-frontend run build
 npm run lint
+npm test
 ```
 
 ## Documentation
 
 Read [Developer Handoff](docs/DEVELOPER_HANDOFF.md) before changing authentication, persistence, deployment, or the reset behavior. It documents the complete architecture, data model, operational procedures, known limitations, and recommended next steps.
+
+Read [QA Automation Guide](docs/QA_AUTOMATION.md) for deterministic setup, cross-role scenarios, API actions, expected failures, and test isolation.
+
+Read [API Reference](docs/API_REFERENCE.md) for endpoint payloads, authentication requirements, response formats, status codes, and command-line examples.
 
 Read [Requirements Traceability and Implementation Assessment](docs/REQUIREMENTS_TRACEABILITY.md) for a requirement-by-requirement comparison between the original project brief and the current implementation, including agreed adaptations, gaps, and recommended follow-up work.
