@@ -4,16 +4,29 @@ The Luma Health demo exposes a small HTTP API for authentication, email MFA, ses
 
 ## Interactive documentation
 
-Open `/api-docs` on the current application origin to use the Swagger
-interface. It renders the versioned OpenAPI 3.1 contract from
-[`public/openapi.json`](../public/openapi.json) and can execute requests against
-the selected server.
+Use one of the following entry points:
 
-For protected operations, first execute `POST /api/auth/login` with one of the
-fixed-account examples and `skipMfa: true`. When the current-origin server is
-selected, the browser retains the HTTP-only `luma_session` cookie
-automatically. Execute `DELETE /api/demo-state` after a scenario to restore the
-deterministic shared state.
+| Environment | Swagger URL |
+| --- | --- |
+| Production Worker | <https://luma-health-demo.thiago-nunes-5e0.workers.dev/api-docs> |
+| Local development after `npm run dev` | <http://localhost:3000/api-docs> |
+| Any deployed frontend | `/api-docs` on that frontend's origin |
+
+The login screen also exposes **QA API documentation** below the sign-in form.
+The interface renders the versioned OpenAPI 3.1 contract from
+[`public/openapi.json`](../public/openapi.json).
+
+To execute protected operations:
+
+1. Keep **Current application origin** selected in the Swagger server list.
+2. Expand `POST /api/auth/login` and select **Try it out**.
+3. Use a fixed patient or employee example with `skipMfa: true`.
+4. Select **Execute**. The browser retains the HTTP-only `luma_session` cookie.
+5. Execute the protected workflow operations in the same browser tab.
+6. Finish with `DELETE /api/demo-state` to restore deterministic shared data.
+
+The **Download OpenAPI** action provides the JSON contract for import into
+Postman, Insomnia, testRigor, or another automation tool.
 
 ## Base URLs
 

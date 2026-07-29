@@ -61,11 +61,17 @@ All demo-state endpoints require an authenticated session.
 
 For complete authentication payloads, response bodies, MFA limits, and status codes, see [API Reference](./API_REFERENCE.md).
 
-The same contract is available interactively at `/api-docs`. The Swagger page
-supports current-origin requests, retains the session cookie created by the
-fixed-account login example, and exposes the protected reset operation. The
-source of truth is the versioned
-[`public/openapi.json`](../public/openapi.json) file.
+The same contract is available through the
+[production Swagger interface](https://luma-health-demo.thiago-nunes-5e0.workers.dev/api-docs)
+or locally at <http://localhost:3000/api-docs> after `npm run dev`. It is also
+linked as **QA API documentation** below the login form.
+
+The Swagger page supports current-origin requests, retains the session cookie
+created by the fixed-account login example, and exposes the protected reset
+operation. Keep **Current application origin** selected, execute
+`POST /api/auth/login` with `skipMfa: true`, and use
+`DELETE /api/demo-state` when the scenario is complete. The source of truth is
+the versioned [`public/openapi.json`](../public/openapi.json) file.
 
 | Request | Allowed role | Result |
 | --- | --- | --- |

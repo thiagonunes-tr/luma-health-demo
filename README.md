@@ -47,10 +47,15 @@ npm test
 
 ## Documentation
 
-Open `/api-docs` in a running application, or use the
-[deployed Swagger API documentation](https://luma-health-demo.thiago-nunes-5e0.workers.dev/api-docs),
-to inspect the OpenAPI contract and execute requests from the browser. The
-versioned contract is available at [`public/openapi.json`](public/openapi.json).
+Access the interactive Swagger documentation through one of these entry points:
+
+- Production: <https://luma-health-demo.thiago-nunes-5e0.workers.dev/api-docs>
+- Local development after `npm run dev`: <http://localhost:3000/api-docs>
+- Login screen: select **QA API documentation** below the sign-in form
+
+The Swagger interface can inspect the contract and execute requests from the
+browser. Its versioned OpenAPI 3.1 source is available at
+[`public/openapi.json`](public/openapi.json).
 
 Read [Developer Handoff](docs/DEVELOPER_HANDOFF.md) before changing authentication, persistence, deployment, or the reset behavior. It documents the complete architecture, data model, operational procedures, known limitations, and recommended next steps.
 

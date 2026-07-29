@@ -96,8 +96,10 @@ GitHub Actions also validates both build targets and deploys the Cloudflare Work
 | Path | Responsibility |
 | --- | --- |
 | `shared/LumaApp.tsx` | Shared React UI used by both Cloudflare and Vercel builds |
+| `shared/ApiDocs.tsx` | Shared lazy-loaded Swagger interface used by both deployment targets |
 | `shared/Icon.tsx` | Shared inline SVG icon set used by navigation, actions, feedback, and dialogs |
 | `app/page.tsx` | Re-exports the shared UI for the Vinext app |
+| `app/api-docs/page.tsx` | Exposes the Swagger interface at `/api-docs` in the Vinext app |
 | `app/globals.css` | Complete application styling and responsive behavior |
 | `app/layout.tsx` | Cloudflare/Vinext HTML shell and social metadata |
 | `app/api/auth/login/route.ts` | Validates credentials, creates MFA challenge, and sends code |
@@ -114,8 +116,10 @@ GitHub Actions also validates both build targets and deploys the Cloudflare Work
 | `wrangler.jsonc` | Worker name, non-secret variables, and observability |
 | `.openai/hosting.json` | Logical Sites project and D1 binding metadata |
 | `.github/workflows/deploy.yml` | Validates both builds and deploys the Worker from `main` |
+| `public/openapi.json` | Versioned OpenAPI 3.1 contract rendered by Swagger and downloadable by QA tools |
 | `docs/API_REFERENCE.md` | Complete HTTP API contract, payloads, responses, and status codes |
 | `docs/QA_AUTOMATION.md` | Deterministic QA setup, automation contracts, and test isolation |
+| `tests/openapi.test.ts` | Guards endpoint coverage, operation identifiers, and cookie-auth documentation |
 | `vercel-frontend/` | Vite entry point and frontend-specific build configuration |
 | `vercel.json` | Canonical Vercel build, output, and proxy configuration |
 
