@@ -25,12 +25,28 @@ type Challenge = {
   requestedRole?: Role;
 };
 
-const appointments = [
+type StaffAppointment = {
+  time: string;
+  patient: string;
+  type: string;
+  status: string;
+  fromPatientPortal?: boolean;
+};
+
+const appointments: StaffAppointment[] = [
   { time: "8:30 AM", patient: "Riley Smith", type: "Routine visit", status: "Confirmed" },
-  { time: "9:15 AM", patient: "Maria Lopez", type: "Follow-up", status: "Waiting" },
+  { time: "9:15 AM", patient: "Jordan Lee", type: "Follow-up", status: "Waiting" },
   { time: "10:00 AM", patient: "Alex Carter", type: "First appointment", status: "Confirmed" },
   { time: "11:30 AM", patient: "Priya Shah", type: "Follow-up", status: "Confirmed" },
 ];
+
+const patientPortalAppointment: StaffAppointment = {
+  time: "10:30 AM",
+  patient: "Maria Lopez",
+  type: "Follow-up · Patient portal",
+  status: "New booking",
+  fromPatientPortal: true,
+};
 
 const navItems = ["Overview", "Appointments", "Forms", "Results", "Messages"];
 
@@ -161,6 +177,11 @@ export default function Home() {
 
   async function signOut() {
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    if (toastTimer.current) {
+      window.clearTimeout(toastTimer.current);
+      toastTimer.current = null;
+    }
+    setToast(null);
     setUser(null);
     setChallenge(null);
     setAuthError("");
@@ -334,6 +355,8 @@ export default function Home() {
         ) : (
           <StaffDashboard
             staffName={displayName.split(/\s+/)[0] || "there"}
+            appointmentBooked={appointmentBooked}
+            intakeComplete={intakeComplete}
             refillStatus={refillStatus}
             busy={demoBusy !== null}
             onApproveRefill={approveRefill}
@@ -531,27 +554,54 @@ function PatientDashboard({ patientName, activeNav, dateLabel, appointmentBooked
   </div>;
 }
 
-function StaffDashboard({ staffName, refillStatus, busy, onApproveRefill, onDeclineRefill }: { staffName: string; refillStatus: RefillStatus; busy: boolean; onApproveRefill: () => void | Promise<unknown>; onDeclineRefill: () => void | Promise<unknown> }) {
+function StaffDashboard({
+  staffName,
+  appointmentBooked,
+  intakeComplete,
+  refillStatus,
+  busy,
+  onApproveRefill,
+  onDeclineRefill,
+}: {
+  staffName: string;
+  appointmentBooked: boolean;
+  intakeComplete: boolean;
+  refillStatus: RefillStatus;
+  busy: boolean;
+  onApproveRefill: () => void | Promise<unknown>;
+  onDeclineRefill: () => void | Promise<unknown>;
+}) {
+  const [showAppointmentDetails, setShowAppointmentDetails] = useState(false);
+  const [showIntakeReview, setShowIntakeReview] = useState(false);
+  const staffAppointments = appointmentBooked
+    ? [...appointments.slice(0, 3), patientPortalAppointment, ...appointments.slice(3)]
+    : appointments;
+  const requestCount =
+    2 + Number(refillStatus === "pending") + Number(intakeComplete);
+
   return <div className="page-content">
     <div className="welcome-row"><div><p className="eyebrow">CLINIC DASHBOARD</p><h1>Good morning, {staffName}.</h1><p className="subtitle">Track today&apos;s schedule and requests that need attention.</p></div><button className="secondary-button">⌕ Search patients</button></div>
     <section className="metric-grid">
-      <Metric value="12" label="Appointments today" detail="4 waiting" tone="blue" />
+      <Metric value={appointmentBooked ? "13" : "12"} label="Appointments today" detail={appointmentBooked ? "1 new from patient portal" : "4 waiting"} tone="blue" />
       <Metric value={refillStatus === "pending" ? "3" : "2"} label="Pending refills" detail="Review requests" tone="coral" />
-      <Metric value="5" label="Forms received" detail="2 new today" tone="mint" />
+      <Metric value={intakeComplete ? "6" : "5"} label="Forms received" detail={intakeComplete ? "1 new from patient portal" : "2 new today"} tone="mint" />
     </section>
     <section className="staff-layout">
       <div className="panel schedule-panel">
         <div className="panel-heading"><div><h2>Today&apos;s schedule</h2><p>Friday, July 24</p></div><button>View schedule</button></div>
-        {appointments.map(item => <div className="schedule-row" key={item.time}><strong>{item.time}</strong><span className="patient-avatar">{item.patient.split(" ").map(n => n[0]).join("")}</span><div><b>{item.patient}</b><small>{item.type}</small></div><span className={`queue-status ${item.status === "Waiting" ? "waiting" : ""}`}>{item.status}</span><button aria-label={`Open ${item.patient}'s record`}>→</button></div>)}
+        {staffAppointments.map(item => <div className={`schedule-row${item.fromPatientPortal ? " newly-booked" : ""}`} key={`${item.time}-${item.patient}`}><strong>{item.time}</strong><span className="patient-avatar">{item.patient.split(" ").map(n => n[0]).join("")}</span><div><b>{item.patient}</b><small>{item.type}</small></div><span className={`queue-status ${item.status === "Waiting" ? "waiting" : ""}`}>{item.status}</span><button aria-label={item.fromPatientPortal ? "Review Maria Lopez's new appointment" : `Open ${item.patient}'s record`} onClick={item.fromPatientPortal ? () => setShowAppointmentDetails(true) : undefined}>→</button></div>)}
       </div>
       <div className="panel request-panel">
-        <div className="panel-heading"><div><h2>Requests</h2><p>Need your attention</p></div><span className="count-badge">{refillStatus === "pending" ? 3 : 2}</span></div>
+        <div className="panel-heading"><div><h2>Requests</h2><p>Need your attention</p></div><span className="count-badge">{requestCount}</span></div>
         {refillStatus === "pending" && <div className="request-card highlighted"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · Losartan 50 mg</small></div><span>Now</span></div><p>Ongoing medication · Last refill 30 days ago.</p><div className="request-actions"><button className="reject" onClick={onDeclineRefill} disabled={busy}>Decline</button><button className="approve" onClick={onApproveRefill} disabled={busy}>Approve</button></div></div>}
         {refillStatus === "rejected" && <div className="request-card highlighted"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · Losartan 50 mg</small></div><span>Reviewed</span></div><p>Request declined · The patient may submit another request.</p></div>}
+        {intakeComplete && <div className="request-card highlighted" aria-label="Maria Lopez submitted intake form"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Intake form · Patient portal</small></div><span>Now</span></div><p>Submitted for the July 24 follow-up appointment.</p><button className="text-action" onClick={() => setShowIntakeReview(true)}>Review form →</button></div>}
         <div className="request-card"><div className="request-top"><span className="patient-avatar lavender">AC</span><div><strong>Alex Carter</strong><small>Intake form</small></div><span>12 min</span></div><button className="text-action">Review form →</button></div>
         <div className="request-card"><div className="request-top"><span className="patient-avatar peach">PS</span><div><strong>Priya Shah</strong><small>Appointment change</small></div><span>28 min</span></div><button className="text-action">Open request →</button></div>
       </div>
     </section>
+    {showAppointmentDetails && <AppointmentReviewModal onClose={() => setShowAppointmentDetails(false)} />}
+    {showIntakeReview && <IntakeReviewModal onClose={() => setShowIntakeReview(false)} />}
   </div>;
 }
 
@@ -569,4 +619,12 @@ function Metric({ value, label, detail, tone }: { value: string; label: string; 
 
 function BookingModal({ busy, onClose, onSubmit }: { busy: boolean; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void> }) {
   return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="booking-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close" disabled={busy}>×</button><p className="eyebrow">NEW APPOINTMENT</p><h2 id="booking-title">Find a time</h2><p>Choose a specialty and the time that works best for you.</p><form onSubmit={onSubmit}><label>Specialty<select defaultValue="Primary Care"><option>Primary Care</option><option>Cardiology</option><option>Dermatology</option></select></label><label>Provider<select defaultValue="Dr. Ana Costa"><option>Dr. Ana Costa</option><option>Dr. John Lima</option></select></label><fieldset><legend>Available times · July 24</legend><div className="time-options"><label><input type="radio" name="time" value="09:00" />9:00 AM</label><label><input type="radio" name="time" value="10:30" defaultChecked />10:30 AM</label><label><input type="radio" name="time" value="15:00" />3:00 PM</label></div></fieldset><button className="primary-button full" type="submit" disabled={busy}>{busy ? "Saving…" : "Confirm appointment"}</button></form></div></div>;
+}
+
+function AppointmentReviewModal({ onClose }: { onClose: () => void }) {
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="appointment-review-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close">×</button><p className="eyebrow">PATIENT PORTAL BOOKING</p><h2 id="appointment-review-title">Appointment details</h2><p>This appointment was booked by Maria Lopez and is now part of the clinic schedule.</p><dl className="review-details"><div><dt>Patient</dt><dd>Maria Lopez</dd></div><div><dt>Date and time</dt><dd>July 24 · 10:30 AM</dd></div><div><dt>Provider</dt><dd>Dr. Ana Costa</dd></div><div><dt>Visit type</dt><dd>Primary Care · Follow-up</dd></div><div><dt>Status</dt><dd><span className="review-status">New booking</span></dd></div></dl><button className="primary-button full" onClick={onClose}>Done</button></div></div>;
+}
+
+function IntakeReviewModal({ onClose }: { onClose: () => void }) {
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="intake-review-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close">×</button><p className="eyebrow">SUBMITTED INTAKE</p><h2 id="intake-review-title">Maria Lopez</h2><p>Submitted through the patient portal for the July 24 follow-up appointment.</p><dl className="review-details"><div><dt>Reason for visit</dt><dd>Routine follow-up</dd></div><div><dt>Current symptoms</dt><dd>No new symptoms reported</dd></div><div><dt>Medication changes</dt><dd>None</dd></div><div><dt>Allergies</dt><dd>No known drug allergies</dd></div><div><dt>Submission status</dt><dd><span className="review-status">Complete</span></dd></div></dl><p className="demo-disclaimer">Predictable demo content · No real patient data</p><button className="primary-button full" onClick={onClose}>Done</button></div></div>;
 }

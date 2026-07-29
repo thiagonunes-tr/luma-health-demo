@@ -243,6 +243,8 @@ Patient actions:
 | `complete-intake` | Sets `intakeComplete` to `true` |
 | `request-refill` | Changes `none` or `rejected` to `pending` |
 
+The employee portal reads the first two fields from the same persisted state. A booked appointment appears in the clinic schedule with a details dialog, and a completed intake appears in the request queue with a deterministic review dialog.
+
 Employee actions:
 
 | Action | Result |

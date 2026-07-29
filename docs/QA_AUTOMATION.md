@@ -91,12 +91,22 @@ Tests should assert these responses when covering negative paths. The client wai
 3. Complete intake, book an appointment, and request a refill.
 4. Sign out.
 5. Sign in as the employee using the demo MFA bypass.
-6. Verify the pending refill and approve or decline it.
-7. Sign out and sign in again as the patient.
-8. Verify the final refill status.
-9. If the refill was declined, submit a new request and confirm it returns to `pending`.
+6. Verify that the new 10:30 AM appointment appears in the clinic schedule and open its details.
+7. Verify that Maria Lopez's submitted intake appears in Requests and open the deterministic form summary.
+8. Verify the pending refill and approve or decline it.
+9. Sign out and sign in again as the patient.
+10. Verify the final refill status.
+11. If the refill was declined, submit a new request and confirm it returns to `pending`.
 
 Use accessible names and visible labels when locating UI controls. Wait for the confirmation toast or resulting UI state instead of using fixed timeouts. Do not continue to the next role until the action request has completed.
+
+The employee dashboard derives all three cross-role views from the same persisted state:
+
+- `appointmentBooked: true` adds Maria Lopez's 10:30 AM appointment, updates the appointment metric, and enables the appointment-details dialog.
+- `intakeComplete: true` adds Maria Lopez's submitted form, updates the form and request counts, and enables the intake-review dialog.
+- `refillStatus: "pending"` adds the refill review card; employee approval or rejection is visible to the patient on the next state load.
+
+There is no live push or polling. A portal that was already open before another session changed the state must reload before asserting the new value.
 
 ## Local execution
 

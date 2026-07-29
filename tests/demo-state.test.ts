@@ -122,3 +122,42 @@ test("roles cannot execute actions assigned to the other portal", () => {
   if (staffBooking.ok) return;
   assert.equal(staffBooking.status, 403);
 });
+
+test("patient workflow remains available when staff reviews the refill", () => {
+  const booked = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "book-appointment",
+    "patient",
+  );
+  assert.equal(booked.ok, true);
+  if (!booked.ok) return;
+
+  const intake = transitionDemoState(
+    booked.state,
+    "complete-intake",
+    "patient",
+  );
+  assert.equal(intake.ok, true);
+  if (!intake.ok) return;
+
+  const refill = transitionDemoState(
+    intake.state,
+    "request-refill",
+    "patient",
+  );
+  assert.equal(refill.ok, true);
+  if (!refill.ok) return;
+
+  const reviewed = transitionDemoState(
+    refill.state,
+    "approve-refill",
+    "staff",
+  );
+  assert.equal(reviewed.ok, true);
+  if (!reviewed.ok) return;
+  assert.deepEqual(reviewed.state, {
+    appointmentBooked: true,
+    intakeComplete: true,
+    refillStatus: "approved",
+  });
+});

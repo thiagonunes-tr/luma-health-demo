@@ -265,6 +265,14 @@ This state is global, not per user. A change made by one signed-in user is visib
 
 `refillStatus` supports `none`, `pending`, `approved`, and `rejected`.
 
+The employee dashboard consumes every workflow field:
+
+- `appointmentBooked` adds Maria Lopez's portal booking to the clinic schedule and appointment metric.
+- `intakeComplete` adds Maria Lopez's form to the request queue and exposes a deterministic review dialog.
+- `refillStatus` controls the staff review card and the status later shown to the patient.
+
+The application reloads this state when an authenticated user enters a portal. It does not currently push changes to already-open sessions or poll for updates.
+
 ### `environment_meta`
 
 Contains the timestamp used to decide when the demo environment should reset. The current row ID is `global`.
@@ -574,6 +582,8 @@ For deterministic setup, negative-path expectations, cross-role sequencing, and 
 - Successful verification creates a session.
 - Appointment, intake, and refill actions update the UI.
 - Reloading restores the persisted global state.
+- The employee dashboard displays the patient's new appointment and submitted intake.
+- Staff can open deterministic appointment details and intake-review dialogs.
 
 ### New account registration
 
@@ -592,6 +602,7 @@ For deterministic setup, negative-path expectations, cross-role sequencing, and 
 - MFA is delivered to the employee demo email.
 - Employee access opens the clinic dashboard.
 - Staff can observe, approve, or decline a pending refill in the shared state.
+- Staff metrics, schedule, and request counts reflect the patient's persisted appointment and intake actions.
 
 ### Reset
 

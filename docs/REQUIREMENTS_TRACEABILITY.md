@@ -95,8 +95,8 @@ Desktop web and mobile web are covered. The employee workflow is covered through
 | Original requirement | Current implementation | Status | Evidence and notes |
 | --- | --- | --- | --- |
 | Search patient | A Search patients button is visible. | **Partial** | The button does not open a search interface or return predictable patient results. |
-| Review appointment queue | The clinic dashboard displays schedule metrics and a list of appointments with statuses. | **Implemented** | `StaffDashboard` renders the current schedule and appointment status badges. |
-| Review intake form | An intake-form request is displayed with a Review form action. | **Partial** | The action does not open the patient's submitted intake information. |
+| Review appointment queue | The clinic dashboard displays schedule metrics and a list of appointments with statuses. A booking made by the patient appears as a new 10:30 AM schedule entry with a details dialog. | **Implemented** | `StaffDashboard` derives the schedule entry and metric from `appointmentBooked`. |
+| Review intake form | A form completed by the patient appears in the employee request queue and opens a deterministic submitted-intake summary. | **Implemented** | `StaffDashboard` derives the request, counts, and review dialog from `intakeComplete`. |
 | Approve/reject refill request | Staff can approve or decline a pending refill and the resulting state is visible to the patient. | **Implemented** | `approve-refill` and `decline-refill` are staff-only API actions. |
 | Update visit status | No employee action changes a visit status. | **Not implemented** | Appointment status badges are static. |
 | Export visit summary | No export or download action exists. | **Not implemented** | There is no CSV, PDF, or mock download confirmation. |
@@ -219,10 +219,9 @@ Consequently:
 
 ### Priority 1 — Complete the cross-role demo
 
-1. Open the submitted intake form from the employee dashboard.
-2. Add a simple, deterministic patient search.
-3. Add an employee action to update visit status.
-4. Add a lightweight visit-summary export with a small PDF, CSV, or predictable download confirmation.
+1. Add a simple, deterministic patient search.
+2. Add an employee action to update visit status.
+3. Add a lightweight visit-summary export with a small PDF, CSV, or predictable download confirmation.
 
 ### Priority 2 — Complete the patient feature set
 
