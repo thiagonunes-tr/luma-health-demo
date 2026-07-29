@@ -96,6 +96,7 @@ GitHub Actions also validates both build targets and deploys the Cloudflare Work
 | Path | Responsibility |
 | --- | --- |
 | `shared/LumaApp.tsx` | Shared React UI used by both Cloudflare and Vercel builds |
+| `shared/Icon.tsx` | Shared inline SVG icon set used by navigation, actions, feedback, and dialogs |
 | `app/page.tsx` | Re-exports the shared UI for the Vinext app |
 | `app/globals.css` | Complete application styling and responsive behavior |
 | `app/layout.tsx` | Cloudflare/Vinext HTML shell and social metadata |
@@ -120,7 +121,7 @@ GitHub Actions also validates both build targets and deploys the Cloudflare Work
 
 ### Shared UI rule
 
-Do not edit a second copy of the product UI. Product behavior belongs in `shared/LumaApp.tsx`, and styling belongs in `app/globals.css`.
+Do not edit a second copy of the product UI. Product behavior belongs in `shared/LumaApp.tsx`, reusable SVG icons belong in `shared/Icon.tsx`, and styling belongs in `app/globals.css`.
 
 Both deployment targets import those same files:
 

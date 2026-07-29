@@ -11,6 +11,9 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: "Luma Health | Patient Portal",
     description: "Simple, connected, human care.",
+    icons: {
+      icon: "/favicon.svg",
+    },
     openGraph: {
       title: "Luma Health",
       description: "Simple, connected, human care.",
