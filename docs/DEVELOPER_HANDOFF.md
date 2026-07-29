@@ -112,6 +112,7 @@ GitHub Actions also validates both build targets and deploys the Cloudflare Work
 | `vite.config.ts` | Vinext and Cloudflare binding configuration |
 | `wrangler.jsonc` | Worker name, non-secret variables, and observability |
 | `.openai/hosting.json` | Logical Sites project and D1 binding metadata |
+| `.github/workflows/deploy.yml` | Validates both builds and deploys the Worker from `main` |
 | `vercel-frontend/` | Vite entry point and frontend-specific build configuration |
 | `vercel.json` | Canonical Vercel build, output, and proxy configuration |
 
@@ -449,6 +450,31 @@ npm --prefix vercel-frontend run build
 
 ## 10. Deployment
 
+### Automated production release
+
+A push or merge to `main` starts two deployment paths for the same commit:
+
+1. The Vercel Git integration builds `vercel-frontend` and promotes the successful production deployment.
+2. The `Validate and deploy` GitHub Actions workflow:
+   - installs dependencies with `npm ci`;
+   - runs `npm run lint`;
+   - builds the Cloudflare/Vinext application;
+   - builds the Vercel frontend as a second validation;
+   - deploys the generated Worker with `cloudflare/wrangler-action`.
+
+The workflow uses a production concurrency group so releases are serialized rather than canceled while another production deployment is running. It can also be started manually with `workflow_dispatch` from the GitHub **Actions** tab.
+
+Required GitHub Actions repository secrets:
+
+| Name | Purpose |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | Scoped token that can deploy Workers and access the bound D1 database |
+| `CLOUDFLARE_ACCOUNT_ID` | Selects the Cloudflare account that owns the Worker |
+
+Do not use the Cloudflare Global API Key in this workflow. Do not copy `BREVO_API_KEY` or `MFA_SESSION_SECRET` into GitHub: Worker secrets already stored in Cloudflare survive normal deployments.
+
+The first complete automated release was verified on July 29, 2026. Lint, both builds, the Worker deployment, and the Vercel production deployment completed successfully.
+
 ### Vercel frontend
 
 The production project should import `thiagonunes-tr/luma-health-demo` and track `main`.
@@ -472,7 +498,9 @@ If the Worker URL changes, update all three locations:
 
 Do not cache authentication API rewrites at the CDN.
 
-### Cloudflare Worker
+### Manual Cloudflare fallback
+
+Use manual deployment only for recovery or when GitHub Actions is unavailable.
 
 Validate first:
 
@@ -486,8 +514,6 @@ Deploy:
 ```bash
 npx wrangler deploy
 ```
-
-For normal production releases, manual deployment is unnecessary. The workflow in `.github/workflows/deploy.yml` runs lint, builds both deployment targets, and deploys the Worker whenever a commit reaches `main`. It requires the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` GitHub Actions secrets.
 
 After deployment, confirm that the Worker still has:
 
@@ -514,7 +540,9 @@ npm run lint
 
 - Login fields start blank.
 - Patient credentials can be copied.
-- Password submission sends a real email.
+- Normal password submission sends a real email.
+- The fixed demo accounts can use **Sign in without two-factor authentication** without sending an MFA email.
+- Registered personal accounts cannot bypass MFA.
 - The code expires after ten minutes.
 - Successful verification creates a session.
 - Appointment, intake, and refill actions update the UI.

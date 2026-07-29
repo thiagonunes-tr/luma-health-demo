@@ -13,6 +13,22 @@ Luma Health is an English-language healthcare portal demo with patient and clini
 
 The Vercel frontend proxies `/api/*` to the Cloudflare Worker. The Worker remains the source of truth for authentication, MFA, users, sessions, and demo state.
 
+## Automated deployment
+
+A push or merge to `main` publishes both production targets from the same commit:
+
+- The Vercel Git integration builds and publishes `vercel-frontend`.
+- GitHub Actions runs lint, builds both targets, and deploys the Cloudflare Worker.
+
+The workflow is defined in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). It can also be started manually from the repository's **Actions** tab.
+
+Required GitHub Actions secrets:
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+The Brevo and session-signing secrets remain stored in Cloudflare and are not copied to GitHub.
+
 ## Quick start
 
 ```bash
