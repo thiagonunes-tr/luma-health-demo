@@ -323,6 +323,19 @@ To change the interval, update `RESET_INTERVAL_MS` in `lib/mfa-db.ts`.
 
 To implement a fixed daily reset time, add a Cloudflare Cron Trigger and move the reset operation into a scheduled Worker handler. Do not delete the `users` table.
 
+### Data-retention policy for the demo
+
+The current policy is intentionally explicit:
+
+- Shared workflow state is restored to deterministic defaults after 24 hours on the next state access.
+- MFA codes expire after 10 minutes. Expired challenge rows are removed during the rolling environment cleanup.
+- Pending, unverified registrations older than 24 hours are removed during that cleanup. A failed Brevo delivery removes its challenge and pending registration immediately.
+- Signed session cookies expire after 8 hours and contain no password or MFA code.
+- Verified personal accounts are retained indefinitely until an authorized operator deletes them directly from D1. There is currently no self-service or public account-deletion endpoint.
+- Fixed demo accounts are application constants and are not D1 user rows.
+
+Because verified users do not currently expire automatically, the public demo must request fictional information only. Before using the project beyond QA training, add an authenticated deletion workflow or a documented operator deletion schedule and confirm applicable privacy obligations.
+
 ## 7. API contract
 
 This section summarizes the available routes. See [API Reference](./API_REFERENCE.md) for complete payloads, response examples, status codes, and command-line usage.
@@ -687,6 +700,10 @@ A future cleanup could convert the repository into explicit npm workspaces and r
 - Delivery depends on Brevo account health, sender verification, quotas, and recipient filtering.
 - The sender is currently a Gmail address rather than a dedicated authenticated product domain.
 - If the sender changes, update `wrangler.jsonc` and redeploy the Worker.
+- Missing credentials, network failures, quota errors, or non-success Brevo responses produce HTTP `502` with the generic message `We could not send your verification code. Please try again.`
+- On that failure path, the newly created MFA challenge and any pending registration for it are deleted. No session or verified user is created.
+- The response never exposes the one-time code, provider response body, API key, or internal exception. Operators should diagnose the failure through protected Worker and Brevo logs.
+- The fixed demo-account bypass does not call Brevo and remains available for deterministic QA when email delivery is unavailable.
 
 ## 13. Troubleshooting
 
@@ -748,7 +765,7 @@ The selected role is saved with the pending MFA registration and becomes permane
 
 Suggested priority order for a future developer:
 
-1. Add API-level authentication, MFA-expiration, and reset integration tests.
+1. Add API-level MFA-expiration and replay integration tests that can inject a fake email provider.
 2. Add a Cloudflare Cron Trigger if reset must happen at a fixed daily time.
 3. Decide whether demo state should remain global or become isolated per test run/user.
 4. Convert the repository to npm workspaces and simplify Vercel dependency resolution.

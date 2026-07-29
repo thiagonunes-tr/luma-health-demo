@@ -220,9 +220,12 @@ The currently listed patient flows are implemented. Future additions should be d
 
 ### Priority 3 — Improve test control and safety
 
-1. Define retention and deletion behavior for registered users.
-2. Add automated end-to-end tests for patient registration, employee registration, MFA, appointment booking, refill request, approval, rejection, and reset.
-3. Document the behavior when Brevo is unavailable.
+The repository now contains a serial, deployment-gating Playwright scenario for the deterministic demo accounts and all shared business flows. Retention and Brevo failure behavior are documented in the developer handoff.
+
+Remaining work:
+
+1. Add provider-injected API tests for MFA expiration, attempt limits, replay prevention, and personal-account registration without sending real email.
+2. Add an authenticated self-service deletion flow if personal registrations must be supported beyond QA training.
 
 ### Priority 4 — Decide native mobile scope
 
@@ -237,11 +240,11 @@ The implementation meets the central business-demo objective: it provides a beli
 
 It does **not** fully implement every platform and feature named in the original document. Its current compliance profile is:
 
-- **Core demo story:** substantially implemented.
+- **Core demo story:** implemented for the agreed web scope.
 - **Desktop and mobile web:** implemented.
 - **Native mobile:** not implemented.
 - **Employee Windows app:** replaced by an approved employee web experience.
-- **Patient and employee feature lists:** partially implemented.
+- **Patient and employee feature lists:** implemented for the agreed web adaptation.
 - **MFA and registration:** implemented beyond the original scope.
 - **Demo reset:** implemented automatically, with users preserved.
 - **Public-demo safety:** clinical data is fake, but real user account data requires explicit operational care.

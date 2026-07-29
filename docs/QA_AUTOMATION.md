@@ -158,6 +158,34 @@ npm run build
 npm --prefix vercel-frontend run build
 ```
 
+### Versioned browser suite
+
+The complete cross-role scenario is stored in `tests/e2e/full_demo.py`. It starts the application on port `4173`, resets the global state, runs serially in headless Chromium, and stops the server even when an assertion fails.
+
+Install its isolated Python dependency and browser:
+
+```bash
+python3 -m venv .venv-e2e
+.venv-e2e/bin/python -m pip install --requirement requirements-e2e.txt
+.venv-e2e/bin/python -m playwright install chromium
+```
+
+Then either create the ignored `.dev.vars` described above or provide an E2E-only secret:
+
+```bash
+E2E_MFA_SESSION_SECRET=local-e2e-only-secret \
+  .venv-e2e/bin/python tests/e2e/full_demo.py
+```
+
+The scenario covers:
+
+- Anonymous and role-forbidden API responses.
+- Patient appointment, intake, insurance, refill, messaging, lab, summary, and CSV flows.
+- Staff patient search, intake review, reply, refill approval, appointment lifecycle, and summary export.
+- Final patient-visible state, invalid-transition handling, and deterministic reset.
+
+Screenshots, downloads, the development-server log, and failure traces are written under ignored `test-results/e2e/`. Open a failed `trace.zip` with `python -m playwright show-trace`.
+
 ## Isolation and parallelism
 
 The demo workflow state is global and shared by all sessions. Stateful end-to-end scenarios must therefore run serially or against separate deployments. Parallel tests may overwrite each other's appointment, intake, message, or refill state.
@@ -169,8 +197,8 @@ For reliable suites:
 - Avoid resetting while another suite is using the same deployment.
 - Use separate environments when destructive stateful suites must run concurrently.
 
-Unit tests do not use the shared deployed state and may run independently.
+Unit tests do not use the shared deployed state and may run independently. The versioned browser suite must remain serial unless the demo state is later isolated per test run.
 
 ## Continuous deployment
 
-The GitHub Actions deployment workflow installs locked dependencies, runs lint and unit tests, builds both application targets, and deploys only after those checks pass. See the [deployment section of the Developer Handoff](./DEVELOPER_HANDOFF.md#10-deployment) for required secrets and operational details.
+The GitHub Actions deployment workflow installs locked dependencies, runs lint, unit tests, and the serial Chromium suite, builds both application targets, and deploys only after those checks pass. Failed browser runs upload `test-results/e2e` as a workflow artifact. See the [deployment section of the Developer Handoff](./DEVELOPER_HANDOFF.md#10-deployment) for required secrets and operational details.
