@@ -30,7 +30,12 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Sign in to continue." }, { status: 401 });
   }
 
-  let body: { action?: unknown; appointmentTime?: unknown };
+  let body: {
+    action?: unknown;
+    appointmentTime?: unknown;
+    intake?: unknown;
+    messageBody?: unknown;
+  };
   try {
     body = await request.json();
   } catch {
@@ -43,6 +48,8 @@ export async function PATCH(request: NextRequest) {
 
   const result = await applyDemoStateAction(body.action, session.role, {
     appointmentTime: body.appointmentTime,
+    intake: body.intake,
+    messageBody: body.messageBody,
   });
   if (!result.ok) {
     return NextResponse.json(

@@ -31,7 +31,7 @@ The strongest areas are:
 - A believable English-language health portal.
 - A single responsive web experience for desktop and mobile browsers.
 - Separate patient and employee experiences.
-- Appointment booking, intake completion, refill request, and refill approval state changes.
+- Appointment booking, structured intake, shared messaging, refill request, and refill approval state changes.
 - Predictable demo data and simple business logic.
 - Password login followed by a real email verification code, with an explicit bypass for the two fixed demo accounts.
 - Persistent demo users and an automatically resetting shared demo state.
@@ -83,10 +83,10 @@ Desktop web and mobile web are covered. The employee workflow is covered through
 | Original requirement | Current implementation | Status | Evidence and notes |
 | --- | --- | --- | --- |
 | Book appointment | The patient selects an available time, books, reschedules, or cancels, and sees the shared lifecycle status. | **Implemented** | Appointment actions persist selected time and status through `/api/demo-state`. |
-| Fill intake form | The patient can complete an intake task and persist its completed state. | **Partial** | The action is testable, but there is no multi-field intake form or reviewable form content. |
+| Fill intake form | The patient completes, reviews, and updates a four-field intake form. Staff sees the submitted answers. | **Implemented** | `submit-intake` validates and persists structured content through `/api/demo-state`. |
 | View lab results | A lab result is displayed in recent activity. | **Partial** | The result is visible, but its action does not open a detailed result page or document. |
 | Update insurance information | No editable insurance workflow is present. | **Not implemented** | No insurance form, API state, or confirmation flow exists. |
-| Message provider | Messages appear in navigation and as a notification count. | **Partial** | There is no message list, conversation, compose action, or submitted-message state. |
+| Message provider | Patient and staff share a persisted conversation and can append replies. | **Implemented** | `send-message` derives the sender from the session and validates a 500-character body. |
 | Request prescription refill | The patient can submit a refill request and see pending, approved, or rejected status. A rejected request can be submitted again. | **Implemented** | Role-authorized actions persist through `/api/demo-state`; shared state uses `refillStatus`. |
 | View visit summary | A visit summary entry is displayed in recent activity. | **Partial** | The summary is visible, but the Open action does not display a summary screen or document. |
 
@@ -96,7 +96,7 @@ Desktop web and mobile web are covered. The employee workflow is covered through
 | --- | --- | --- | --- |
 | Search patient | Staff can filter a deterministic directory, open a patient profile, inspect shared state, and verify an empty result. | **Implemented** | `PatientSearchModal` exposes five fictional profiles; Maria reflects the current appointment, intake, and refill state. |
 | Review appointment queue | The clinic dashboard displays schedule metrics and a list of appointments with statuses. A patient booking appears at its selected time with a details dialog. | **Implemented** | `StaffDashboard` derives the schedule entry, time, lifecycle status, and metric from the shared appointment state. |
-| Review intake form | A form completed by the patient appears in the employee request queue and opens a deterministic submitted-intake summary. | **Implemented** | `StaffDashboard` derives the request, counts, and review dialog from `intakeComplete`. |
+| Review intake form | A form completed by the patient appears in the employee request queue and shows the actual submitted answers. | **Implemented** | `StaffDashboard` derives the request, counts, and review dialog from `intakeSubmission`. |
 | Approve/reject refill request | Staff can approve or decline a pending refill and the resulting state is visible to the patient. | **Implemented** | `approve-refill` and `decline-refill` are staff-only API actions. |
 | Update visit status | Staff can check in the patient, start the visit, and complete it in sequence. The patient sees the resulting status. | **Implemented** | Role-authorized actions enforce `scheduled` → `checked-in` → `in-progress` → `completed`. |
 | Export visit summary | No export or download action exists. | **Not implemented** | There is no CSV, PDF, or mock download confirmation. |
@@ -162,7 +162,7 @@ Brevo is consistent with the original integration exception only while it remain
 
 ### Current reset behavior
 
-The reset is global, not per user. After 24 hours have elapsed, the next demo-state read or write clears the shared appointment, intake, and refill state. Registered users remain available. Expired MFA challenges and stale pending registrations are cleaned up.
+The reset is global, not per user. After 24 hours have elapsed, the next demo-state read or write restores the shared appointment, intake, message, and refill state to deterministic defaults. Registered users remain available. Expired MFA challenges and stale pending registrations are cleaned up.
 
 Tests can establish an immediate known starting state through the protected reset endpoint before exercising patient and employee flows.
 
@@ -225,9 +225,7 @@ Consequently:
 
 1. Add a small insurance update form and confirmation state.
 2. Add a lab-result detail view.
-3. Add a basic provider message workflow.
-4. Add a visit-summary detail view.
-5. Replace the single-click intake completion with a short form.
+3. Add a visit-summary detail view.
 
 ### Priority 3 — Improve test control and safety
 

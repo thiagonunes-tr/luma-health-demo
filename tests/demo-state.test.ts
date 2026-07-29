@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEFAULT_DEMO_STATE,
+  DEFAULT_INTAKE_SUBMISSION,
   isDemoStateAction,
   transitionDemoState,
 } from "../lib/demo-state";
@@ -9,6 +10,8 @@ import {
 test("recognizes only supported demo actions", () => {
   assert.equal(isDemoStateAction("book-appointment"), true);
   assert.equal(isDemoStateAction("complete-appointment"), true);
+  assert.equal(isDemoStateAction("submit-intake"), true);
+  assert.equal(isDemoStateAction("send-message"), true);
   assert.equal(isDemoStateAction("decline-refill"), true);
   assert.equal(isDemoStateAction("overwrite-state"), false);
   assert.equal(isDemoStateAction(null), false);
@@ -24,11 +27,10 @@ test("patient actions update only their intended field", () => {
   assert.equal(booked.ok, true);
   if (!booked.ok) return;
   assert.deepEqual(booked.state, {
+    ...DEFAULT_DEMO_STATE,
     appointmentBooked: true,
     appointmentStatus: "scheduled",
     appointmentTime: "10:30",
-    intakeComplete: false,
-    refillStatus: "none",
   });
 
   const intake = transitionDemoState(
@@ -39,11 +41,94 @@ test("patient actions update only their intended field", () => {
   assert.equal(intake.ok, true);
   if (!intake.ok) return;
   assert.deepEqual(intake.state, {
-    appointmentBooked: true,
-    appointmentStatus: "scheduled",
-    appointmentTime: "10:30",
+    ...booked.state,
     intakeComplete: true,
-    refillStatus: "none",
+    intakeSubmission: DEFAULT_INTAKE_SUBMISSION,
+  });
+});
+
+test("patient submits structured intake data for staff review", () => {
+  const submitted = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "submit-intake",
+    "patient",
+    {
+      intake: {
+        reasonForVisit: "New symptoms",
+        currentSymptoms: "Occasional headache",
+        medicationChanges: "Started vitamin D",
+        allergies: "Penicillin",
+      },
+    },
+  );
+  assert.equal(submitted.ok, true);
+  if (!submitted.ok) return;
+  assert.equal(submitted.state.intakeComplete, true);
+  assert.deepEqual(submitted.state.intakeSubmission, {
+    reasonForVisit: "New symptoms",
+    currentSymptoms: "Occasional headache",
+    medicationChanges: "Started vitamin D",
+    allergies: "Penicillin",
+    submittedAt: "July 24, 2026 at 9:30 AM",
+  });
+
+  const invalid = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "submit-intake",
+    "patient",
+    {
+      intake: {
+        reasonForVisit: "New symptoms",
+        currentSymptoms: "",
+        medicationChanges: "None",
+        allergies: "None",
+      },
+    },
+  );
+  assert.deepEqual(invalid, {
+    ok: false,
+    status: 400,
+    error: "Complete every intake field within the allowed character limits.",
+  });
+});
+
+test("patient and staff append messages to the shared thread", () => {
+  const patientMessage = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "send-message",
+    "patient",
+    { messageBody: "  Can I bring my medication list?  " },
+  );
+  assert.equal(patientMessage.ok, true);
+  if (!patientMessage.ok) return;
+  assert.deepEqual(patientMessage.state.messages.at(-1), {
+    id: "message-3",
+    sender: "patient",
+    body: "Can I bring my medication list?",
+    sentAt: "Jul 24 · Now",
+  });
+
+  const staffMessage = transitionDemoState(
+    patientMessage.state,
+    "send-message",
+    "staff",
+    { messageBody: "Yes, please bring it." },
+  );
+  assert.equal(staffMessage.ok, true);
+  if (!staffMessage.ok) return;
+  assert.equal(staffMessage.state.messages.length, 4);
+  assert.equal(staffMessage.state.messages.at(-1)?.sender, "staff");
+
+  const empty = transitionDemoState(
+    staffMessage.state,
+    "send-message",
+    "patient",
+    { messageBody: "   " },
+  );
+  assert.deepEqual(empty, {
+    ok: false,
+    status: 400,
+    error: "Enter a message with no more than 500 characters.",
   });
 });
 
@@ -163,10 +248,7 @@ test("patient workflow remains available when staff reviews the refill", () => {
   assert.equal(reviewed.ok, true);
   if (!reviewed.ok) return;
   assert.deepEqual(reviewed.state, {
-    appointmentBooked: true,
-    appointmentStatus: "scheduled",
-    appointmentTime: "10:30",
-    intakeComplete: true,
+    ...intake.state,
     refillStatus: "approved",
   });
 });

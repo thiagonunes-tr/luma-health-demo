@@ -4,8 +4,10 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AppointmentStatus,
   AppointmentTime,
+  DemoMessage,
   DemoState,
   DemoStateAction,
+  IntakeSubmission,
   RefillStatus,
 } from "../lib/demo-state";
 import { Icon, type IconName } from "./Icon";
@@ -92,13 +94,17 @@ export default function Home() {
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [activeNav, setActiveNav] = useState("Overview");
   const [showBooking, setShowBooking] = useState(false);
+  const [showIntake, setShowIntake] = useState(false);
   const [appointmentBooked, setAppointmentBooked] = useState(false);
   const [appointmentStatus, setAppointmentStatus] =
     useState<AppointmentStatus>("none");
   const [appointmentTime, setAppointmentTime] =
     useState<AppointmentTime>("10:30");
   const [intakeComplete, setIntakeComplete] = useState(false);
+  const [intakeSubmission, setIntakeSubmission] =
+    useState<IntakeSubmission | null>(null);
   const [refillStatus, setRefillStatus] = useState<RefillStatus>("none");
+  const [messages, setMessages] = useState<DemoMessage[]>([]);
   const [demoBusy, setDemoBusy] = useState<DemoStateAction | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const toastTimer = useRef<number | null>(null);
@@ -243,14 +249,20 @@ export default function Home() {
     setAppointmentStatus(state.appointmentStatus);
     setAppointmentTime(state.appointmentTime);
     setIntakeComplete(state.intakeComplete);
+    setIntakeSubmission(state.intakeSubmission);
     setRefillStatus(state.refillStatus);
+    setMessages(state.messages);
   }
 
   async function performDemoAction(
     action: DemoStateAction,
     successTitle: string,
     successMessage: string,
-    input: { appointmentTime?: AppointmentTime } = {},
+    input: {
+      appointmentTime?: AppointmentTime;
+      intake?: Omit<IntakeSubmission, "submittedAt">;
+      messageBody?: string;
+    } = {},
   ): Promise<boolean> {
     if (demoBusy) return false;
     setDemoBusy(action);
@@ -307,6 +319,29 @@ export default function Home() {
       "request-refill",
       "Request submitted",
       "The clinic team can now review your refill request.",
+    );
+  }
+
+  async function submitIntake(
+    intake: Omit<IntakeSubmission, "submittedAt">,
+  ) {
+    const saved = await performDemoAction(
+      "submit-intake",
+      intakeComplete ? "Form updated" : "Form submitted",
+      "Your answers are available to the clinic team.",
+      { intake },
+    );
+    if (saved) setShowIntake(false);
+  }
+
+  async function sendMessage(messageBody: string) {
+    return performDemoAction(
+      "send-message",
+      "Message sent",
+      role === "patient"
+        ? "Your care team can now read your message."
+        : "The patient can now read your reply.",
+      { messageBody },
     );
   }
 
@@ -380,7 +415,7 @@ export default function Home() {
             >
               <span className="nav-icon"><Icon name={navIcons[index]} size={18} /></span>
               {item}
-              {item === "Messages" && <span className="nav-badge">2</span>}
+              {item === "Messages" && <span className="nav-badge">{messages.length}</span>}
             </button>
           ))}
         </nav>
@@ -408,7 +443,14 @@ export default function Home() {
           </div>
         </header>
 
-        {role === "patient" ? (
+        {activeNav === "Messages" ? (
+          <MessageCenter
+            role={role}
+            messages={messages}
+            busy={demoBusy !== null}
+            onSend={sendMessage}
+          />
+        ) : role === "patient" ? (
           <PatientDashboard
             patientName={displayName.split(/\s+/)[0] || "there"}
             activeNav={activeNav}
@@ -419,11 +461,8 @@ export default function Home() {
             refillStatus={refillStatus}
             busy={demoBusy !== null}
             onBook={() => setShowBooking(true)}
-            onCompleteIntake={() => performDemoAction(
-              "complete-intake",
-              "Form completed",
-              "Your answers were saved for your next appointment.",
-            )}
+            onOpenIntake={() => setShowIntake(true)}
+            onOpenMessages={() => setActiveNav("Messages")}
             onRequestRefill={requestRefill}
           />
         ) : (
@@ -433,6 +472,7 @@ export default function Home() {
             appointmentStatus={appointmentStatus}
             appointmentTime={appointmentTime}
             intakeComplete={intakeComplete}
+            intakeSubmission={intakeSubmission}
             refillStatus={refillStatus}
             busy={demoBusy !== null}
             onApproveRefill={approveRefill}
@@ -442,11 +482,15 @@ export default function Home() {
         )}
 
         <nav className="mobile-nav" aria-label="Mobile navigation">
-          {navItems.slice(0, 4).map((item, index) => <button key={item} className={activeNav === item ? "active" : ""} onClick={() => setActiveNav(item)}><span><Icon name={navIcons[index]} size={19} /></span>{item.split(" ")[0]}</button>)}
+          {navItems.filter(item => item !== "Results").map(item => {
+            const index = navItems.indexOf(item);
+            return <button key={item} className={activeNav === item ? "active" : ""} onClick={() => setActiveNav(item)}><span><Icon name={navIcons[index]} size={19} /></span>{item.split(" ")[0]}</button>;
+          })}
         </nav>
       </section>
 
       {showBooking && <BookingModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} busy={demoBusy !== null} onCancel={cancelAppointment} onClose={() => setShowBooking(false)} onSubmit={bookAppointment} />}
+      {showIntake && <IntakeFormModal intakeSubmission={intakeSubmission} busy={demoBusy !== null} onClose={() => setShowIntake(false)} onSubmit={submitIntake} />}
       {toast && <div className={`toast ${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"}><span><Icon name={toast.tone === "error" ? "alert-circle" : "check"} size={16} /></span><div><strong>{toast.title}</strong><p>{toast.message}</p></div><button onClick={() => setToast(null)} aria-label="Close"><Icon name="close" size={17} /></button></div>}
     </main>
   );
@@ -574,7 +618,7 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
   </main>;
 }
 
-function PatientDashboard({ patientName, activeNav, dateLabel, appointmentStatus, appointmentTime, intakeComplete, refillStatus, busy, onBook, onCompleteIntake, onRequestRefill }: {
+function PatientDashboard({ patientName, activeNav, dateLabel, appointmentStatus, appointmentTime, intakeComplete, refillStatus, busy, onBook, onOpenIntake, onOpenMessages, onRequestRefill }: {
   patientName: string;
   activeNav: string;
   dateLabel: string;
@@ -584,7 +628,8 @@ function PatientDashboard({ patientName, activeNav, dateLabel, appointmentStatus
   refillStatus: RefillStatus;
   busy: boolean;
   onBook: () => void;
-  onCompleteIntake: () => void | Promise<unknown>;
+  onOpenIntake: () => void;
+  onOpenMessages: () => void;
   onRequestRefill: () => void | Promise<unknown>;
 }) {
   const hasActiveAppointment = ["scheduled", "checked-in", "in-progress"].includes(
@@ -617,7 +662,7 @@ function PatientDashboard({ patientName, activeNav, dateLabel, appointmentStatus
     <div className="section-heading"><div><h2>Quick actions</h2><p>What would you like to do?</p></div></div>
     <section className="quick-grid">
       <QuickCard color="blue" icon="calendar" title={canBookAppointment ? "Book an appointment" : "Manage appointment"} text={hasActiveAppointment ? `${appointmentStatusLabel(appointmentStatus)} · ${formatAppointmentTime(appointmentTime)}` : appointmentStatus === "cancelled" ? "Previous appointment cancelled" : appointmentStatus === "completed" ? "Previous visit completed" : "Choose the best date and time"} action={canBookAppointment ? "Book now" : appointmentStatus === "scheduled" ? "Reschedule or cancel" : "View status"} onClick={onBook} />
-      <QuickCard color="coral" icon="clipboard" title="Intake form" text={intakeComplete ? "Form submitted successfully" : "Takes about 3 minutes"} action={intakeComplete ? "Completed" : "Complete form"} onClick={onCompleteIntake} done={intakeComplete} disabled={busy || intakeComplete} />
+      <QuickCard color="coral" icon="clipboard" title="Intake form" text={intakeComplete ? "Your answers are available to the clinic" : "Takes about 3 minutes"} action={intakeComplete ? "Review or update" : "Complete form"} onClick={onOpenIntake} done={intakeComplete} disabled={busy} />
       <QuickCard color="mint" icon="pill" title="Request a refill" text={refillStatus === "approved" ? "Refill approved by the clinic" : refillStatus === "pending" ? "Under staff review" : refillStatus === "rejected" ? "The clinic declined the previous request" : "Request it quickly and securely"} action={refillStatus === "approved" ? "Approved" : refillStatus === "pending" ? "Under review" : refillStatus === "rejected" ? "Request again" : "Request refill"} onClick={onRequestRefill} done={refillStatus === "pending" || refillStatus === "approved"} disabled={busy || refillStatus === "pending" || refillStatus === "approved"} />
     </section>
 
@@ -626,13 +671,13 @@ function PatientDashboard({ patientName, activeNav, dateLabel, appointmentStatus
         <div className="panel-heading"><div><h2>Recent activity</h2><p>Your latest updates</p></div><button>View all</button></div>
         <Activity icon="flask" color="green" title="Result available" text="Complete blood count" time="Today, 9:42 AM" action="View" />
         <Activity icon={refillStatus === "approved" ? "pill" : "clipboard"} color="purple" title={refillStatus === "approved" ? "Refill approved" : "Visit summary"} text={refillStatus === "approved" ? "Losartan 50 mg" : "July 12 appointment"} time={refillStatus === "approved" ? "Now" : "Jul 12, 4:20 PM"} action="Open" />
-        <Activity icon="mail" color="orange" title="New message" text="Care team" time="Jul 10, 11:15 AM" action="Reply" />
+        <Activity icon="mail" color="orange" title="New message" text="Care team" time="Jul 24, 9:10 AM" action="Reply" onClick={onOpenMessages} />
       </div>
       <aside className="panel care-panel">
         <div className="care-header"><span className="care-mark"><Icon name="heart" size={16} /></span><div><h2>Your care is on track</h2><p>Keep it up, Maria!</p></div></div>
         <div className="progress-ring"><span>75<small>%</small></span></div>
         <div className="care-copy"><strong>3 of 4 tasks completed</strong><p>Complete your form before your next appointment.</p></div>
-        <button onClick={onCompleteIntake} disabled={busy || intakeComplete}>{intakeComplete ? "All set" : "Continue task"} <Icon name="arrow-right" size={13} /></button>
+        <button onClick={onOpenIntake} disabled={busy}>{intakeComplete ? "Review answers" : "Continue task"} <Icon name="arrow-right" size={13} /></button>
       </aside>
     </section>
     <p className="date-note">Demo data · {dateLabel}</p>
@@ -645,6 +690,7 @@ function StaffDashboard({
   appointmentStatus,
   appointmentTime,
   intakeComplete,
+  intakeSubmission,
   refillStatus,
   busy,
   onApproveRefill,
@@ -656,6 +702,7 @@ function StaffDashboard({
   appointmentStatus: AppointmentStatus;
   appointmentTime: AppointmentTime;
   intakeComplete: boolean;
+  intakeSubmission: IntakeSubmission | null;
   refillStatus: RefillStatus;
   busy: boolean;
   onApproveRefill: () => void | Promise<unknown>;
@@ -701,7 +748,7 @@ function StaffDashboard({
       </div>
     </section>
     {showAppointmentDetails && <AppointmentReviewModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} busy={busy} onAdvance={onAdvanceAppointment} onClose={() => setShowAppointmentDetails(false)} />}
-    {showIntakeReview && <IntakeReviewModal onClose={() => setShowIntakeReview(false)} />}
+    {showIntakeReview && intakeSubmission && <IntakeReviewModal intakeSubmission={intakeSubmission} onClose={() => setShowIntakeReview(false)} />}
     {showPatientSearch && <PatientSearchModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} intakeComplete={intakeComplete} refillStatus={refillStatus} onClose={() => setShowPatientSearch(false)} />}
   </div>;
 }
@@ -710,8 +757,8 @@ function QuickCard({ color, icon, title, text, action, onClick, done = false, di
   return <button className="quick-card" onClick={onClick} disabled={disabled}><span className={`quick-icon ${color}`}><Icon name={done ? "check" : icon} size={20} /></span><span><strong>{title}</strong><small>{text}</small><b>{action} <Icon name="arrow-right" size={13} /></b></span></button>;
 }
 
-function Activity({ icon, color, title, text, time, action }: { icon: IconName; color: string; title: string; text: string; time: string; action: string }) {
-  return <div className="activity-row"><span className={`activity-icon ${color}`}><Icon name={icon} size={15} /></span><div><strong>{title}</strong><p>{text}</p></div><time>{time}</time><button>{action}</button></div>;
+function Activity({ icon, color, title, text, time, action, onClick }: { icon: IconName; color: string; title: string; text: string; time: string; action: string; onClick?: () => void }) {
+  return <div className="activity-row"><span className={`activity-icon ${color}`}><Icon name={icon} size={15} /></span><div><strong>{title}</strong><p>{text}</p></div><time>{time}</time><button onClick={onClick}>{action}</button></div>;
 }
 
 function Metric({ value, label, detail, tone }: { value: string; label: string; detail: string; tone: string }) {
@@ -742,6 +789,43 @@ function PatientSearchModal({ appointmentStatus, appointmentTime, intakeComplete
   return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal patient-search-modal" role="dialog" aria-modal="true" aria-labelledby="patient-search-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close"><Icon name="close" size={18} /></button>{selectedPatient ? <><button className="auth-back" type="button" onClick={() => setSelectedPatient(null)}><Icon name="arrow-left" size={14} /> Back to results</button><p className="eyebrow">PATIENT PROFILE</p><div className="patient-profile-heading"><span className="patient-avatar">{selectedPatient.initials}</span><div><h2 id="patient-search-title">{selectedPatient.name}</h2><p>{selectedPatient.email}</p></div></div><dl className="review-details"><div><dt>Date of birth</dt><dd>{selectedPatient.dateOfBirth}</dd></div><div><dt>Last visit</dt><dd>{selectedPatient.lastVisit}</dd></div>{selectedPatient.name === "Maria Lopez" && <><div><dt>Appointment</dt><dd>{appointmentStatusLabel(appointmentStatus)}{appointmentStatus !== "none" ? ` · ${formatAppointmentTime(appointmentTime)}` : ""}</dd></div><div><dt>Intake</dt><dd>{intakeComplete ? "Submitted" : "Not submitted"}</dd></div><div><dt>Refill</dt><dd>{refillStatus === "none" ? "No request" : refillStatus}</dd></div></>}</dl><p className="demo-disclaimer">Predictable demo profile · No real patient data</p></> : <><p className="eyebrow">PATIENT DIRECTORY</p><h2 id="patient-search-title">Search patients</h2><p>Find a predictable demo patient by name.</p><label className="patient-search-input"><span>Patient name</span><div><Icon name="search" size={17} /><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="Search by name" /></div></label><div className="patient-results" aria-live="polite">{results.map(patient => <button key={patient.email} onClick={() => setSelectedPatient(patient)}><span className="patient-avatar">{patient.initials}</span><span><strong>{patient.name}</strong><small>{patient.email}</small></span><Icon name="arrow-right" size={15} /></button>)}{results.length === 0 && <p>No patients found.</p>}</div></>} </div></div>;
 }
 
-function IntakeReviewModal({ onClose }: { onClose: () => void }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="intake-review-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close"><Icon name="close" size={18} /></button><p className="eyebrow">SUBMITTED INTAKE</p><h2 id="intake-review-title">Maria Lopez</h2><p>Submitted through the patient portal for the July 24 follow-up appointment.</p><dl className="review-details"><div><dt>Reason for visit</dt><dd>Routine follow-up</dd></div><div><dt>Current symptoms</dt><dd>No new symptoms reported</dd></div><div><dt>Medication changes</dt><dd>None</dd></div><div><dt>Allergies</dt><dd>No known drug allergies</dd></div><div><dt>Submission status</dt><dd><span className="review-status">Complete</span></dd></div></dl><p className="demo-disclaimer">Predictable demo content · No real patient data</p><button className="primary-button full" onClick={onClose}>Done</button></div></div>;
+function IntakeFormModal({ intakeSubmission, busy, onClose, onSubmit }: {
+  intakeSubmission: IntakeSubmission | null;
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (intake: Omit<IntakeSubmission, "submittedAt">) => Promise<void>;
+}) {
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    void onSubmit({
+      reasonForVisit: String(form.get("reasonForVisit")) as IntakeSubmission["reasonForVisit"],
+      currentSymptoms: String(form.get("currentSymptoms") ?? ""),
+      medicationChanges: String(form.get("medicationChanges") ?? ""),
+      allergies: String(form.get("allergies") ?? ""),
+    });
+  }
+
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal intake-modal" role="dialog" aria-modal="true" aria-labelledby="intake-form-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close" disabled={busy}><Icon name="close" size={18} /></button><p className="eyebrow">{intakeSubmission ? "UPDATE INTAKE" : "PRE-VISIT INTAKE"}</p><h2 id="intake-form-title">{intakeSubmission ? "Review your answers" : "Tell us about your visit"}</h2><p>Your answers are shared with the clinic team for this QA demonstration.</p><form onSubmit={submit}><label>Reason for visit<select name="reasonForVisit" defaultValue={intakeSubmission?.reasonForVisit ?? "Routine follow-up"}><option>Routine follow-up</option><option>New symptoms</option><option>Medication review</option></select></label><label>Current symptoms<textarea name="currentSymptoms" maxLength={240} defaultValue={intakeSubmission?.currentSymptoms ?? ""} placeholder="Describe symptoms or enter None" required /></label><label>Medication changes<textarea name="medicationChanges" maxLength={240} defaultValue={intakeSubmission?.medicationChanges ?? ""} placeholder="Describe changes or enter None" required /></label><label>Allergies<input name="allergies" maxLength={160} defaultValue={intakeSubmission?.allergies ?? ""} placeholder="List allergies or enter None" required /></label><p className="form-hint">Use fictional information only. All fields are required.</p><button className="primary-button full" type="submit" disabled={busy}>{busy ? "Saving…" : intakeSubmission ? "Update form" : "Submit form"}</button></form></div></div>;
+}
+
+function MessageCenter({ role, messages, busy, onSend }: {
+  role: Role;
+  messages: DemoMessage[];
+  busy: boolean;
+  onSend: (messageBody: string) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const saved = await onSend(draft);
+    if (saved) setDraft("");
+  }
+
+  return <div className="page-content message-page"><div className="welcome-row"><div><p className="eyebrow">{role === "patient" ? "PATIENT PORTAL" : "CLINIC DASHBOARD"}</p><h1>Messages</h1><p className="subtitle">A shared demo conversation between Maria Lopez and the care team.</p></div></div><section className="panel conversation-panel" aria-label="Care team conversation"><header><span className="patient-avatar">{role === "patient" ? "CT" : "ML"}</span><div><strong>{role === "patient" ? "Care team" : "Maria Lopez"}</strong><small>{role === "patient" ? "Primary Care" : "Patient portal"}</small></div><span className="conversation-status"><i></i> Demo thread</span></header><div className="message-thread" aria-live="polite">{messages.map(message => <article key={message.id} className={message.sender === role ? "message-bubble own" : "message-bubble"}><span>{message.sender === "patient" ? "Maria Lopez" : "Care team"}</span><p>{message.body}</p><time>{message.sentAt}</time></article>)}</div><form className="message-composer" onSubmit={submit}><label htmlFor="message-body">Reply to {role === "patient" ? "your care team" : "Maria Lopez"}</label><div><textarea id="message-body" value={draft} onChange={event => setDraft(event.target.value)} maxLength={500} placeholder="Write a demo message…" required /><button className="primary-button" type="submit" disabled={busy || !draft.trim()}>{busy ? "Sending…" : "Send message"}</button></div><small>{draft.length}/500 · No real patient information</small></form></section></div>;
+}
+
+function IntakeReviewModal({ intakeSubmission, onClose }: { intakeSubmission: IntakeSubmission; onClose: () => void }) {
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="intake-review-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close"><Icon name="close" size={18} /></button><p className="eyebrow">SUBMITTED INTAKE</p><h2 id="intake-review-title">Maria Lopez</h2><p>Submitted through the patient portal on {intakeSubmission.submittedAt}.</p><dl className="review-details"><div><dt>Reason for visit</dt><dd>{intakeSubmission.reasonForVisit}</dd></div><div><dt>Current symptoms</dt><dd>{intakeSubmission.currentSymptoms}</dd></div><div><dt>Medication changes</dt><dd>{intakeSubmission.medicationChanges}</dd></div><div><dt>Allergies</dt><dd>{intakeSubmission.allergies}</dd></div><div><dt>Submission status</dt><dd><span className="review-status">Complete</span></dd></div></dl><p className="demo-disclaimer">Predictable demo content · No real patient data</p><button className="primary-button full" onClick={onClose}>Done</button></div></div>;
 }

@@ -8,13 +8,32 @@ export type AppointmentStatus =
   | "completed"
   | "cancelled";
 export type AppointmentTime = "09:00" | "10:30" | "15:00";
+export type IntakeReason =
+  | "Routine follow-up"
+  | "New symptoms"
+  | "Medication review";
+export type IntakeSubmission = {
+  reasonForVisit: IntakeReason;
+  currentSymptoms: string;
+  medicationChanges: string;
+  allergies: string;
+  submittedAt: string;
+};
+export type DemoMessage = {
+  id: string;
+  sender: DemoActorRole;
+  body: string;
+  sentAt: string;
+};
 
 export type DemoState = {
   appointmentBooked: boolean;
   appointmentStatus: AppointmentStatus;
   appointmentTime: AppointmentTime;
   intakeComplete: boolean;
+  intakeSubmission: IntakeSubmission | null;
   refillStatus: RefillStatus;
+  messages: DemoMessage[];
 };
 
 export type DemoStateAction =
@@ -25,24 +44,53 @@ export type DemoStateAction =
   | "start-appointment"
   | "complete-appointment"
   | "complete-intake"
+  | "submit-intake"
+  | "send-message"
   | "request-refill"
   | "approve-refill"
   | "decline-refill";
 
 export type DemoActionInput = {
   appointmentTime?: unknown;
+  intake?: unknown;
+  messageBody?: unknown;
 };
 
 export type DemoTransitionResult =
   | { ok: true; state: DemoState }
   | { ok: false; status: 400 | 403 | 409; error: string };
 
+export const DEFAULT_INTAKE_SUBMISSION: IntakeSubmission = {
+  reasonForVisit: "Routine follow-up",
+  currentSymptoms: "No new symptoms reported",
+  medicationChanges: "None",
+  allergies: "No known drug allergies",
+  submittedAt: "July 24, 2026 at 9:30 AM",
+};
+
+export const DEFAULT_MESSAGES: DemoMessage[] = [
+  {
+    id: "message-1",
+    sender: "staff",
+    body: "Hi Maria, please complete your intake form before your next visit.",
+    sentAt: "Jul 24 · 9:10 AM",
+  },
+  {
+    id: "message-2",
+    sender: "patient",
+    body: "Thank you. I’ll complete it today.",
+    sentAt: "Jul 24 · 9:18 AM",
+  },
+];
+
 export const DEFAULT_DEMO_STATE: DemoState = {
   appointmentBooked: false,
   appointmentStatus: "none",
   appointmentTime: "10:30",
   intakeComplete: false,
+  intakeSubmission: null,
   refillStatus: "none",
+  messages: DEFAULT_MESSAGES,
 };
 
 const actions: DemoStateAction[] = [
@@ -53,6 +101,8 @@ const actions: DemoStateAction[] = [
   "start-appointment",
   "complete-appointment",
   "complete-intake",
+  "submit-intake",
+  "send-message",
   "request-refill",
   "approve-refill",
   "decline-refill",
@@ -64,6 +114,61 @@ export function isDemoStateAction(value: unknown): value is DemoStateAction {
 
 export function isAppointmentTime(value: unknown): value is AppointmentTime {
   return ["09:00", "10:30", "15:00"].includes(String(value));
+}
+
+export function isIntakeSubmission(value: unknown): value is IntakeSubmission {
+  if (!value || typeof value !== "object") return false;
+  const intake = value as Partial<IntakeSubmission>;
+  return (
+    ["Routine follow-up", "New symptoms", "Medication review"].includes(
+      String(intake.reasonForVisit),
+    ) &&
+    isRequiredText(intake.currentSymptoms, 240) &&
+    isRequiredText(intake.medicationChanges, 240) &&
+    isRequiredText(intake.allergies, 160) &&
+    typeof intake.submittedAt === "string"
+  );
+}
+
+export function isDemoMessage(value: unknown): value is DemoMessage {
+  if (!value || typeof value !== "object") return false;
+  const message = value as Partial<DemoMessage>;
+  return (
+    typeof message.id === "string" &&
+    (message.sender === "patient" || message.sender === "staff") &&
+    isRequiredText(message.body, 500) &&
+    typeof message.sentAt === "string"
+  );
+}
+
+function isRequiredText(value: unknown, maxLength: number): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    value.trim().length <= maxLength
+  );
+}
+
+function parseIntake(value: unknown): IntakeSubmission | null {
+  if (!value || typeof value !== "object") return null;
+  const intake = value as Partial<IntakeSubmission>;
+  if (
+    !["Routine follow-up", "New symptoms", "Medication review"].includes(
+      String(intake.reasonForVisit),
+    ) ||
+    !isRequiredText(intake.currentSymptoms, 240) ||
+    !isRequiredText(intake.medicationChanges, 240) ||
+    !isRequiredText(intake.allergies, 160)
+  ) {
+    return null;
+  }
+  return {
+    reasonForVisit: intake.reasonForVisit as IntakeReason,
+    currentSymptoms: intake.currentSymptoms.trim(),
+    medicationChanges: intake.medicationChanges.trim(),
+    allergies: intake.allergies.trim(),
+    submittedAt: "July 24, 2026 at 9:30 AM",
+  };
 }
 
 export function transitionDemoState(
@@ -79,6 +184,8 @@ export function transitionDemoState(
       "reschedule-appointment",
       "cancel-appointment",
       "complete-intake",
+      "submit-intake",
+      "send-message",
       "request-refill",
     ].includes(action)
   ) {
@@ -95,6 +202,7 @@ export function transitionDemoState(
       "check-in-appointment",
       "start-appointment",
       "complete-appointment",
+      "send-message",
       "approve-refill",
       "decline-refill",
     ].includes(action)
@@ -212,7 +320,54 @@ export function transitionDemoState(
         },
       };
     case "complete-intake":
-      return { ok: true, state: { ...state, intakeComplete: true } };
+      return {
+        ok: true,
+        state: {
+          ...state,
+          intakeComplete: true,
+          intakeSubmission: DEFAULT_INTAKE_SUBMISSION,
+        },
+      };
+    case "submit-intake": {
+      const intakeSubmission = parseIntake(input.intake);
+      if (!intakeSubmission) {
+        return {
+          ok: false,
+          status: 400,
+          error:
+            "Complete every intake field within the allowed character limits.",
+        };
+      }
+      return {
+        ok: true,
+        state: { ...state, intakeComplete: true, intakeSubmission },
+      };
+    }
+    case "send-message": {
+      if (!isRequiredText(input.messageBody, 500)) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Enter a message with no more than 500 characters.",
+        };
+      }
+      const sequence = state.messages.length + 1;
+      return {
+        ok: true,
+        state: {
+          ...state,
+          messages: [
+            ...state.messages,
+            {
+              id: `message-${sequence}`,
+              sender: role,
+              body: input.messageBody.trim(),
+              sentAt: "Jul 24 · Now",
+            },
+          ],
+        },
+      };
+    }
     case "request-refill":
       if (state.refillStatus === "pending" || state.refillStatus === "approved") {
         return {

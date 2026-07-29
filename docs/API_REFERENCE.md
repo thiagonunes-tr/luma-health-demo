@@ -211,7 +211,22 @@ The state is global and shared by every session:
   "appointmentStatus": "none",
   "appointmentTime": "10:30",
   "intakeComplete": false,
-  "refillStatus": "none"
+  "intakeSubmission": null,
+  "refillStatus": "none",
+  "messages": [
+    {
+      "id": "message-1",
+      "sender": "staff",
+      "body": "Hi Maria, please complete your intake form before your next visit.",
+      "sentAt": "Jul 24 · 9:10 AM"
+    },
+    {
+      "id": "message-2",
+      "sender": "patient",
+      "body": "Thank you. I’ll complete it today.",
+      "sentAt": "Jul 24 · 9:18 AM"
+    }
+  ]
 }
 ```
 
@@ -230,7 +245,22 @@ Requires a valid session and returns:
     "appointmentStatus": "none",
     "appointmentTime": "10:30",
     "intakeComplete": false,
-    "refillStatus": "none"
+    "intakeSubmission": null,
+    "refillStatus": "none",
+    "messages": [
+      {
+        "id": "message-1",
+        "sender": "staff",
+        "body": "Hi Maria, please complete your intake form before your next visit.",
+        "sentAt": "Jul 24 · 9:10 AM"
+      },
+      {
+        "id": "message-2",
+        "sender": "patient",
+        "body": "Thank you. I’ll complete it today.",
+        "sentAt": "Jul 24 · 9:18 AM"
+      }
+    ]
   }
 }
 ```
@@ -248,7 +278,9 @@ Patient actions:
 | `book-appointment` | Creates a scheduled appointment at the supplied `appointmentTime` |
 | `reschedule-appointment` | Changes the time of a scheduled appointment |
 | `cancel-appointment` | Cancels a scheduled appointment |
-| `complete-intake` | Sets `intakeComplete` to `true` |
+| `submit-intake` | Validates and persists the four-field intake submission |
+| `complete-intake` | Legacy-compatible action that saves the deterministic default intake |
+| `send-message` | Appends a patient message to the shared conversation |
 | `request-refill` | Changes `none` or `rejected` to `pending` |
 
 Booking and rescheduling requests include `appointmentTime`:
@@ -260,7 +292,34 @@ Booking and rescheduling requests include `appointmentTime`:
 }
 ```
 
-The employee portal reads the appointment and intake fields from the same persisted state. An appointment appears in the clinic schedule with its selected time and lifecycle status, and a completed intake appears in the request queue with a deterministic review dialog.
+Structured intake requests include every field:
+
+```json
+{
+  "action": "submit-intake",
+  "intake": {
+    "reasonForVisit": "New symptoms",
+    "currentSymptoms": "Occasional headache",
+    "medicationChanges": "None",
+    "allergies": "Penicillin"
+  }
+}
+```
+
+`reasonForVisit` is `Routine follow-up`, `New symptoms`, or `Medication review`. Symptoms and medication changes accept 1–240 trimmed characters; allergies accept 1–160. The server supplies the deterministic `submittedAt` value.
+
+Both roles send a message through the same action:
+
+```json
+{
+  "action": "send-message",
+  "messageBody": "Can I bring my medication list?"
+}
+```
+
+The body accepts 1–500 trimmed characters. The server supplies `id`, `sender`, and `sentAt`; clients cannot impersonate the other role.
+
+The employee portal reads the appointment, intake, and message fields from the same persisted state. A completed intake appears in the request queue with the actual submitted answers.
 
 Employee actions:
 
@@ -269,6 +328,7 @@ Employee actions:
 | `check-in-appointment` | Changes `scheduled` to `checked-in` |
 | `start-appointment` | Changes `checked-in` to `in-progress` |
 | `complete-appointment` | Changes `in-progress` to `completed` |
+| `send-message` | Appends a staff reply to the shared conversation |
 | `approve-refill` | Changes `pending` to `approved` |
 | `decline-refill` | Changes `pending` to `rejected` |
 
@@ -289,7 +349,9 @@ Successful response:
     "appointmentStatus": "none",
     "appointmentTime": "10:30",
     "intakeComplete": false,
-    "refillStatus": "pending"
+    "intakeSubmission": null,
+    "refillStatus": "pending",
+    "messages": ["Default two-message thread omitted for brevity"]
   }
 }
 ```
@@ -302,7 +364,7 @@ Successful response:
 | `403` | Action is not allowed for the current role |
 | `409` | Transition is incompatible with the current state |
 
-Examples of conflicts include advancing an appointment out of sequence, changing an appointment after check-in, requesting an already pending or approved refill, and attempting to approve or decline a refill that is not pending.
+Invalid intake or message payloads return HTTP `400`. Examples of conflicts include advancing an appointment out of sequence, changing an appointment after check-in, requesting an already pending or approved refill, and attempting to approve or decline a refill that is not pending.
 
 ### `DELETE /api/demo-state`
 
@@ -315,7 +377,9 @@ Restores the default state without removing registered users:
     "appointmentStatus": "none",
     "appointmentTime": "10:30",
     "intakeComplete": false,
-    "refillStatus": "none"
+    "intakeSubmission": null,
+    "refillStatus": "none",
+    "messages": ["The deterministic two-message thread is restored"]
   }
 }
 ```
@@ -356,6 +420,6 @@ curl --fail-with-body \
 
 ## Out-of-scope APIs
 
-There are no dedicated endpoints for messages, laboratory-result details, visit summaries, insurance updates, or clinical records. Those areas remain static demo content. Patient search uses a deterministic client-side directory, while appointment lifecycle, intake completion, and refill review are represented by the shared workflow state.
+There are no dedicated endpoints for laboratory-result details, visit summaries, insurance updates, or clinical records. Those areas remain static demo content. Patient search uses a deterministic client-side directory, while appointment lifecycle, structured intake, messaging, and refill review are represented by the shared workflow state.
 
 For deterministic cross-role automation and parallelism guidance, see [QA Automation Guide](./QA_AUTOMATION.md).

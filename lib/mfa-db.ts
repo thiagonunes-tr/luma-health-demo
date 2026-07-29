@@ -1,11 +1,15 @@
 import { env } from "cloudflare:workers";
 import {
   DEFAULT_DEMO_STATE,
+  DEFAULT_INTAKE_SUBMISSION,
+  DEFAULT_MESSAGES,
   DemoActorRole,
   DemoActionInput,
   DemoState,
   DemoStateAction,
   DemoTransitionResult,
+  isDemoMessage,
+  isIntakeSubmission,
   transitionDemoState,
 } from "./demo-state";
 
@@ -15,6 +19,8 @@ export {
   type DemoStateAction,
   type AppointmentStatus,
   type AppointmentTime,
+  type DemoMessage,
+  type IntakeSubmission,
 } from "./demo-state";
 
 let initialized = false;
@@ -197,18 +203,29 @@ export async function getDemoState(): Promise<DemoState> {
     )
       ? state.appointmentTime as AppointmentTime
       : "10:30";
+    const intakeSubmission = isIntakeSubmission(state.intakeSubmission)
+      ? state.intakeSubmission
+      : state.intakeComplete
+        ? DEFAULT_INTAKE_SUBMISSION
+        : null;
+    const messages = Array.isArray(state.messages) &&
+      state.messages.every(isDemoMessage)
+      ? state.messages
+      : DEFAULT_MESSAGES;
     return {
       appointmentBooked: ["scheduled", "checked-in", "in-progress"].includes(
         appointmentStatus,
       ),
       appointmentStatus,
       appointmentTime,
-      intakeComplete: Boolean(state.intakeComplete),
+      intakeComplete: intakeSubmission !== null,
+      intakeSubmission,
       refillStatus: ["none", "pending", "approved", "rejected"].includes(
         state.refillStatus,
       )
         ? state.refillStatus
         : "none",
+      messages,
     };
   } catch {
     return DEFAULT_DEMO_STATE;
@@ -255,5 +272,5 @@ export async function resetDemoState(): Promise<DemoState> {
       )
       .bind(now),
   ]);
-  return { ...DEFAULT_DEMO_STATE };
+  return { ...DEFAULT_DEMO_STATE, messages: [...DEFAULT_MESSAGES] };
 }
