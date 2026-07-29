@@ -1,10 +1,13 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import ApiDocs from "../../shared/ApiDocs";
 import LumaApp from "../../shared/LumaApp";
 import "../../app/globals.css";
 
+const isApiDocs = /^\/api-docs\/?$/.test(window.location.pathname);
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <LumaApp />
+    {isApiDocs ? <ApiDocs /> : <LumaApp />}
   </StrictMode>,
 );

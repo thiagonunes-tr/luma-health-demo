@@ -1,0 +1,910 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Luma Health Demo API",
+    "version": "1.0.0",
+    "description": "HTTP contract for the Luma Health QA-training application. The API provides authentication, email MFA, session management, and a deterministic shared workflow state. It is not a clinical or production healthcare API."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current application origin (recommended for Swagger requests)"
+    },
+    {
+      "url": "https://luma-health-demo.thiago-nunes-5e0.workers.dev",
+      "description": "Cloudflare Worker"
+    },
+    {
+      "url": "http://localhost:3000",
+      "description": "Local development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Authentication",
+      "description": "Login, MFA, session, logout, and personal-account lifecycle."
+    },
+    {
+      "name": "Demo workflow",
+      "description": "Deterministic state shared by the patient and employee experiences."
+    }
+  ],
+  "paths": {
+    "/api/auth/login": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Sign in, request MFA, or begin registration",
+        "description": "Existing accounts receive an MFA challenge unless skipMfa is true for one of the two fixed demo accounts. An unknown valid email begins personal-account registration. Successful fixed-account bypass creates the HTTP-only session cookie immediately.",
+        "operationId": "login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              },
+              "examples": {
+                "patientDemoBypass": {
+                  "summary": "Deterministic patient login without MFA",
+                  "value": {
+                    "email": "patient.demo@testrigor-mail.com",
+                    "password": "PatientDemo!2026",
+                    "skipMfa": true
+                  }
+                },
+                "employeeDemoBypass": {
+                  "summary": "Deterministic employee login without MFA",
+                  "value": {
+                    "email": "employee.demo@testrigor-mail.com",
+                    "password": "EmployeeDemo!2026",
+                    "skipMfa": true
+                  }
+                },
+                "emailMfa": {
+                  "summary": "Request an email code",
+                  "value": {
+                    "email": "patient.demo@testrigor-mail.com",
+                    "password": "PatientDemo!2026"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "An MFA challenge was created or a fixed demo session was created.",
+            "headers": {
+              "Set-Cookie": {
+                "description": "Present only when skipMfa successfully creates a session.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/MfaChallengeResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UserResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "The MFA email provider could not deliver the code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/verify": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Verify an email MFA challenge",
+        "description": "Consumes a valid six-digit challenge, persists a pending personal account when applicable, and creates the HTTP-only session cookie.",
+        "operationId": "verifyMfa",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyRequest"
+              },
+              "example": {
+                "challengeId": "6cd209b4-0985-4d04-b69a-44999268ce26",
+                "code": "123456"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "MFA was accepted and a session was created.",
+            "headers": {
+              "Set-Cookie": {
+                "description": "HTTP-only luma_session cookie.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "410": {
+            "description": "The challenge expired or was already consumed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/auth/session": {
+      "get": {
+        "tags": ["Authentication"],
+        "summary": "Read the current session",
+        "description": "Returns the authenticated user when the luma_session cookie is valid, otherwise returns user as null. This endpoint always returns HTTP 200.",
+        "operationId": "getSession",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {}
+        ],
+        "responses": {
+          "200": {
+            "description": "Current session state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                },
+                "examples": {
+                  "anonymous": {
+                    "value": {
+                      "user": null
+                    }
+                  },
+                  "authenticated": {
+                    "value": {
+                      "user": {
+                        "email": "patient.demo@testrigor-mail.com",
+                        "name": "Maria Lopez",
+                        "role": "patient"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Clear the current session",
+        "description": "Expires the luma_session cookie. The operation is idempotent and also succeeds for an anonymous caller.",
+        "operationId": "logout",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {}
+        ],
+        "responses": {
+          "200": {
+            "description": "The session cookie was cleared.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                },
+                "example": {
+                  "ok": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/account": {
+      "delete": {
+        "tags": ["Authentication"],
+        "summary": "Delete the signed-in personal account",
+        "description": "Requires the exact confirmation DELETE and the current password. Fixed demo accounts are protected and always receive HTTP 403. Deletion clears authentication records and expires the session cookie.",
+        "operationId": "deleteAccount",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteAccountRequest"
+              },
+              "example": {
+                "confirmation": "DELETE",
+                "password": "personal-account-password"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The personal account was deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/demo-state": {
+      "get": {
+        "tags": ["Demo workflow"],
+        "summary": "Read the shared workflow state",
+        "description": "Returns the global deterministic state used by both patient and employee experiences.",
+        "operationId": "getDemoState",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current workflow state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoStateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Demo workflow"],
+        "summary": "Apply a role-authorized workflow action",
+        "description": "Patient actions include booking, rescheduling, cancellation, intake, messaging, insurance updates, and refill requests. Employee actions include visit progression, messaging, and refill review. Invalid transitions return HTTP 409.",
+        "operationId": "updateDemoState",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoStateActionRequest"
+              },
+              "examples": {
+                "bookAppointment": {
+                  "summary": "Patient books a time",
+                  "value": {
+                    "action": "book-appointment",
+                    "appointmentTime": "09:00"
+                  }
+                },
+                "submitIntake": {
+                  "summary": "Patient submits structured intake",
+                  "value": {
+                    "action": "submit-intake",
+                    "intake": {
+                      "reasonForVisit": "New symptoms",
+                      "currentSymptoms": "Occasional headache after exercise",
+                      "medicationChanges": "Started vitamin D",
+                      "allergies": "Penicillin"
+                    }
+                  }
+                },
+                "sendMessage": {
+                  "summary": "Current role sends a message",
+                  "value": {
+                    "action": "send-message",
+                    "messageBody": "I submitted the intake form."
+                  }
+                },
+                "updateInsurance": {
+                  "summary": "Patient updates insurance",
+                  "value": {
+                    "action": "update-insurance",
+                    "insurance": {
+                      "provider": "Demo Health",
+                      "planName": "QA Gold",
+                      "memberId": "QA-9001"
+                    }
+                  }
+                },
+                "approveRefill": {
+                  "summary": "Employee approves a pending refill",
+                  "value": {
+                    "action": "approve-refill"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The action was applied and the updated state is returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoStateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Demo workflow"],
+        "summary": "Reset the deterministic workflow state",
+        "description": "Only the two fixed demo accounts can reset the shared state. Registered personal accounts receive HTTP 403. User accounts are preserved.",
+        "operationId": "resetDemoState",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The default workflow state was restored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoStateResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "luma_session",
+        "description": "Created by a successful MFA verification or fixed-account bypass. Swagger retains this HTTP-only cookie automatically when requests use the current application origin."
+      }
+    },
+    "schemas": {
+      "Role": {
+        "type": "string",
+        "enum": ["patient", "staff"]
+      },
+      "User": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["email", "name", "role"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["user"],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/User"
+          }
+        }
+      },
+      "SessionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["user"],
+        "properties": {
+          "user": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/User"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["email", "password"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "format": "password"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "skipMfa": {
+            "type": "boolean",
+            "default": false,
+            "description": "Accepted only for the fixed patient and employee demo accounts."
+          }
+        }
+      },
+      "MfaChallengeResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["challengeId", "destination", "expiresInSeconds"],
+        "properties": {
+          "challengeId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "destination": {
+            "type": "string",
+            "description": "Masked email destination."
+          },
+          "expiresInSeconds": {
+            "type": "integer",
+            "const": 600
+          }
+        }
+      },
+      "VerifyRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["challengeId", "code"],
+        "properties": {
+          "challengeId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^\\d{6}$"
+          }
+        }
+      },
+      "DeleteAccountRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["confirmation", "password"],
+        "properties": {
+          "confirmation": {
+            "type": "string",
+            "const": "DELETE"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          }
+        }
+      },
+      "AppointmentStatus": {
+        "type": "string",
+        "enum": ["none", "scheduled", "checked-in", "in-progress", "completed", "cancelled"]
+      },
+      "AppointmentTime": {
+        "type": "string",
+        "enum": ["09:00", "10:30", "15:00"]
+      },
+      "RefillStatus": {
+        "type": "string",
+        "enum": ["none", "pending", "approved", "rejected"]
+      },
+      "IntakeInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reasonForVisit", "currentSymptoms", "medicationChanges", "allergies"],
+        "properties": {
+          "reasonForVisit": {
+            "type": "string",
+            "enum": ["Routine follow-up", "New symptoms", "Medication review"]
+          },
+          "currentSymptoms": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "medicationChanges": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "allergies": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        }
+      },
+      "IntakeSubmission": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/IntakeInput"
+          },
+          {
+            "type": "object",
+            "required": ["submittedAt"],
+            "properties": {
+              "submittedAt": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "InsuranceInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "planName", "memberId"],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "planName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "memberId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          }
+        }
+      },
+      "Insurance": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/InsuranceInput"
+          },
+          {
+            "type": "object",
+            "required": ["updatedAt"],
+            "properties": {
+              "updatedAt": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "DemoMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "sender", "body", "sentAt"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "sender": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "sentAt": {
+            "type": "string"
+          }
+        }
+      },
+      "DemoState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["appointmentBooked", "appointmentStatus", "appointmentTime", "intakeComplete", "intakeSubmission", "refillStatus", "messages", "insurance"],
+        "properties": {
+          "appointmentBooked": {
+            "type": "boolean"
+          },
+          "appointmentStatus": {
+            "$ref": "#/components/schemas/AppointmentStatus"
+          },
+          "appointmentTime": {
+            "$ref": "#/components/schemas/AppointmentTime"
+          },
+          "intakeComplete": {
+            "type": "boolean"
+          },
+          "intakeSubmission": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IntakeSubmission"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "refillStatus": {
+            "$ref": "#/components/schemas/RefillStatus"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DemoMessage"
+            }
+          },
+          "insurance": {
+            "$ref": "#/components/schemas/Insurance"
+          }
+        }
+      },
+      "DemoStateResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["state"],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/DemoState"
+          }
+        }
+      },
+      "DemoStateActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action"],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "book-appointment",
+              "reschedule-appointment",
+              "cancel-appointment",
+              "check-in-appointment",
+              "start-appointment",
+              "complete-appointment",
+              "complete-intake",
+              "submit-intake",
+              "send-message",
+              "update-insurance",
+              "request-refill",
+              "approve-refill",
+              "decline-refill"
+            ]
+          },
+          "appointmentTime": {
+            "$ref": "#/components/schemas/AppointmentTime"
+          },
+          "intake": {
+            "$ref": "#/components/schemas/IntakeInput"
+          },
+          "messageBody": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "insurance": {
+            "$ref": "#/components/schemas/InsuranceInput"
+          }
+        }
+      },
+      "OkResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ok"],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "The request body or action is invalid.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Authentication failed or a valid session is required.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The authenticated account or role cannot perform this operation.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The requested account or resource is unavailable.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "The request conflicts with the current workflow or challenge state.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "An MFA cooldown, request limit, or attempt limit was reached.",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds until a new MFA code may be requested, when applicable.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "The operation could not be completed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    }
+  }
+}

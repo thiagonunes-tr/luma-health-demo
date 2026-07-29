@@ -47,6 +47,11 @@ npm test
 
 ## Documentation
 
+Open `/api-docs` in a running application, or use the
+[deployed Swagger API documentation](https://luma-health-demo.thiago-nunes-5e0.workers.dev/api-docs),
+to inspect the OpenAPI contract and execute requests from the browser. The
+versioned contract is available at [`public/openapi.json`](public/openapi.json).
+
 Read [Developer Handoff](docs/DEVELOPER_HANDOFF.md) before changing authentication, persistence, deployment, or the reset behavior. It documents the complete architecture, data model, operational procedures, known limitations, and recommended next steps.
 
 Read [QA Automation Guide](docs/QA_AUTOMATION.md) for deterministic setup, cross-role scenarios, API actions, expected failures, and test isolation.

@@ -686,7 +686,7 @@ If the demo needs isolated sessions, add an environment or tenant identifier and
 
 ### Test suite
 
-`npm test` runs deterministic unit coverage for demo actions, role restrictions, workflow transitions, and MFA policies. `npm run test:e2e` runs the serial cross-role browser journey. The GitHub Actions production workflow runs both suites as release gates before either build and the Worker deploy.
+`npm test` runs deterministic unit coverage for demo actions, role restrictions, workflow transitions, MFA policies, and OpenAPI route coverage. `npm run test:e2e` validates the interactive `/api-docs` console and then runs the serial cross-role browser journey. The GitHub Actions production workflow runs both suites as release gates before either build and the Worker deploy.
 
 Remaining recommended coverage:
 

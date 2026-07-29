@@ -702,7 +702,12 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
           <p className="resend-copy">Didn&apos;t receive it? <button type="button" onClick={onResend} disabled={busy}>Send a new code</button></p>
         </>}
       </div>
-      <p className="privacy-copy">Protected access · Demo environment · No real patient data</p>
+      <p className="privacy-copy">
+        Protected access · Demo environment · No real patient data ·{" "}
+        <button type="button" onClick={() => window.location.assign("/api-docs")}>
+          QA API documentation
+        </button>
+      </p>
     </section>
   </main>;
 }

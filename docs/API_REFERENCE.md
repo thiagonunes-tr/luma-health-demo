@@ -2,6 +2,19 @@
 
 The Luma Health demo exposes a small HTTP API for authentication, email MFA, session management, and shared demo workflow state. It does not provide clinical or production-grade healthcare APIs.
 
+## Interactive documentation
+
+Open `/api-docs` on the current application origin to use the Swagger
+interface. It renders the versioned OpenAPI 3.1 contract from
+[`public/openapi.json`](../public/openapi.json) and can execute requests against
+the selected server.
+
+For protected operations, first execute `POST /api/auth/login` with one of the
+fixed-account examples and `skipMfa: true`. When the current-origin server is
+selected, the browser retains the HTTP-only `luma_session` cookie
+automatically. Execute `DELETE /api/demo-state` after a scenario to restore the
+deterministic shared state.
+
 ## Base URLs
 
 Local development:

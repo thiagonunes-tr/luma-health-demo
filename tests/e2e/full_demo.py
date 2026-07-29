@@ -36,6 +36,7 @@ def wait_for_server(process: subprocess.Popen, timeout_seconds: int = 60) -> Non
 def sign_in(page: Page, role: str, email: str, password: str) -> None:
   page.goto(BASE_URL)
   page.wait_for_load_state("networkidle")
+  page.get_by_role("button", name="QA API documentation").wait_for()
   if role == "staff":
     page.get_by_role("button", name="Employee", exact=True).click()
   page.get_by_label("Email address").fill(email)
@@ -74,7 +75,36 @@ def download_summary(page: Page) -> None:
     assert expected in content
 
 
+def verify_api_docs(page: Page) -> None:
+  response = page.goto(f"{BASE_URL}/api-docs")
+  assert response is not None and response.status == 200
+  page.wait_for_load_state("networkidle")
+  page.get_by_role(
+    "heading", name="Interactive API documentation"
+  ).wait_for()
+  page.locator(".swagger-ui .info .title").filter(
+    has_text="Luma Health Demo API"
+  ).wait_for()
+
+  operation = page.locator("#operations-Authentication-getSession")
+  operation.wait_for()
+  operation.click()
+  operation.get_by_role("button", name="Try it out").click()
+  operation.get_by_role("button", name="Execute").click()
+  operation.locator(".response-col_status").get_by_text(
+    "200", exact=True
+  ).wait_for()
+
+  contract = page.request.get(f"{BASE_URL}/openapi.json")
+  assert contract.status == 200
+  document = contract.json()
+  assert document["openapi"].startswith("3.1.")
+  assert len(document["paths"]) == 6
+
+
 def run_scenario(page: Page) -> None:
+  verify_api_docs(page)
+
   anonymous = page.request.get(f"{BASE_URL}/api/demo-state")
   assert anonymous.status == 401
   anonymous_delete = page.request.delete(

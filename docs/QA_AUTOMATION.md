@@ -61,6 +61,12 @@ All demo-state endpoints require an authenticated session.
 
 For complete authentication payloads, response bodies, MFA limits, and status codes, see [API Reference](./API_REFERENCE.md).
 
+The same contract is available interactively at `/api-docs`. The Swagger page
+supports current-origin requests, retains the session cookie created by the
+fixed-account login example, and exposes the protected reset operation. The
+source of truth is the versioned
+[`public/openapi.json`](../public/openapi.json) file.
+
 | Request | Allowed role | Result |
 | --- | --- | --- |
 | `GET /api/auth/session` | Anonymous or authenticated | `200` with `{ "user": null }` or the current user |
