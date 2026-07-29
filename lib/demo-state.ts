@@ -25,6 +25,12 @@ export type DemoMessage = {
   body: string;
   sentAt: string;
 };
+export type InsuranceInfo = {
+  provider: string;
+  planName: string;
+  memberId: string;
+  updatedAt: string;
+};
 
 export type DemoState = {
   appointmentBooked: boolean;
@@ -34,6 +40,7 @@ export type DemoState = {
   intakeSubmission: IntakeSubmission | null;
   refillStatus: RefillStatus;
   messages: DemoMessage[];
+  insurance: InsuranceInfo;
 };
 
 export type DemoStateAction =
@@ -46,6 +53,7 @@ export type DemoStateAction =
   | "complete-intake"
   | "submit-intake"
   | "send-message"
+  | "update-insurance"
   | "request-refill"
   | "approve-refill"
   | "decline-refill";
@@ -54,6 +62,7 @@ export type DemoActionInput = {
   appointmentTime?: unknown;
   intake?: unknown;
   messageBody?: unknown;
+  insurance?: unknown;
 };
 
 export type DemoTransitionResult =
@@ -83,6 +92,13 @@ export const DEFAULT_MESSAGES: DemoMessage[] = [
   },
 ];
 
+export const DEFAULT_INSURANCE: InsuranceInfo = {
+  provider: "HealthFirst Demo",
+  planName: "Silver Care",
+  memberId: "HF-2048",
+  updatedAt: "Initial demo record",
+};
+
 export const DEFAULT_DEMO_STATE: DemoState = {
   appointmentBooked: false,
   appointmentStatus: "none",
@@ -91,6 +107,7 @@ export const DEFAULT_DEMO_STATE: DemoState = {
   intakeSubmission: null,
   refillStatus: "none",
   messages: DEFAULT_MESSAGES,
+  insurance: DEFAULT_INSURANCE,
 };
 
 const actions: DemoStateAction[] = [
@@ -103,6 +120,7 @@ const actions: DemoStateAction[] = [
   "complete-intake",
   "submit-intake",
   "send-message",
+  "update-insurance",
   "request-refill",
   "approve-refill",
   "decline-refill",
@@ -138,6 +156,17 @@ export function isDemoMessage(value: unknown): value is DemoMessage {
     (message.sender === "patient" || message.sender === "staff") &&
     isRequiredText(message.body, 500) &&
     typeof message.sentAt === "string"
+  );
+}
+
+export function isInsuranceInfo(value: unknown): value is InsuranceInfo {
+  if (!value || typeof value !== "object") return false;
+  const insurance = value as Partial<InsuranceInfo>;
+  return (
+    isRequiredText(insurance.provider, 80) &&
+    isRequiredText(insurance.planName, 80) &&
+    isRequiredText(insurance.memberId, 40) &&
+    typeof insurance.updatedAt === "string"
   );
 }
 
@@ -186,6 +215,7 @@ export function transitionDemoState(
       "complete-intake",
       "submit-intake",
       "send-message",
+      "update-insurance",
       "request-refill",
     ].includes(action)
   ) {
@@ -365,6 +395,39 @@ export function transitionDemoState(
               sentAt: "Jul 24 · Now",
             },
           ],
+        },
+      };
+    }
+    case "update-insurance": {
+      if (!input.insurance || typeof input.insurance !== "object") {
+        return {
+          ok: false,
+          status: 400,
+          error: "Complete every insurance field.",
+        };
+      }
+      const insurance = input.insurance as Partial<InsuranceInfo>;
+      if (
+        !isRequiredText(insurance.provider, 80) ||
+        !isRequiredText(insurance.planName, 80) ||
+        !isRequiredText(insurance.memberId, 40)
+      ) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Complete every insurance field.",
+        };
+      }
+      return {
+        ok: true,
+        state: {
+          ...state,
+          insurance: {
+            provider: insurance.provider.trim(),
+            planName: insurance.planName.trim(),
+            memberId: insurance.memberId.trim(),
+            updatedAt: "July 24, 2026 at 10:05 AM",
+          },
         },
       };
     }

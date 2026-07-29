@@ -40,10 +40,7 @@ The strongest areas are:
 The most important gaps are:
 
 - No native mobile application.
-- No insurance update workflow.
-- Lab results, provider messages, and visit summaries are visual representations rather than complete workflows.
-- Patient search and intake review are visual representations rather than complete workflows.
-- Visit status updates and visit summary exports are not implemented.
+- Lab results and visit summaries use deterministic fictional content rather than a clinical records backend.
 - The original fake-authentication guidance was replaced by real registration, password hashing, sessions, and email MFA.
 
 The project should therefore be described as a **functional demo implementation with agreed platform and authentication adaptations**, not as full literal compliance with every original requirement.
@@ -84,11 +81,11 @@ Desktop web and mobile web are covered. The employee workflow is covered through
 | --- | --- | --- | --- |
 | Book appointment | The patient selects an available time, books, reschedules, or cancels, and sees the shared lifecycle status. | **Implemented** | Appointment actions persist selected time and status through `/api/demo-state`. |
 | Fill intake form | The patient completes, reviews, and updates a four-field intake form. Staff sees the submitted answers. | **Implemented** | `submit-intake` validates and persists structured content through `/api/demo-state`. |
-| View lab results | A lab result is displayed in recent activity. | **Partial** | The result is visible, but its action does not open a detailed result page or document. |
-| Update insurance information | No editable insurance workflow is present. | **Not implemented** | No insurance form, API state, or confirmation flow exists. |
+| View lab results | The patient can open a CBC detail view with three deterministic values and reference ranges. | **Implemented** | Results navigation and recent activity both open `LabResultModal`. |
+| Update insurance information | The patient can review and update provider, plan, and member ID. | **Implemented** | `update-insurance` validates and persists coverage in the shared state. |
 | Message provider | Patient and staff share a persisted conversation and can append replies. | **Implemented** | `send-message` derives the sender from the session and validates a 500-character body. |
 | Request prescription refill | The patient can submit a refill request and see pending, approved, or rejected status. A rejected request can be submitted again. | **Implemented** | Role-authorized actions persist through `/api/demo-state`; shared state uses `refillStatus`. |
-| View visit summary | A visit summary entry is displayed in recent activity. | **Partial** | The summary is visible, but the Open action does not display a summary screen or document. |
+| View visit summary | Patient and staff can open a deterministic primary-care visit summary. | **Implemented** | Results, recent activity, appointment review, and patient profile expose `VisitSummaryModal`. |
 
 ## 7. Employee functionality
 
@@ -99,7 +96,7 @@ Desktop web and mobile web are covered. The employee workflow is covered through
 | Review intake form | A form completed by the patient appears in the employee request queue and shows the actual submitted answers. | **Implemented** | `StaffDashboard` derives the request, counts, and review dialog from `intakeSubmission`. |
 | Approve/reject refill request | Staff can approve or decline a pending refill and the resulting state is visible to the patient. | **Implemented** | `approve-refill` and `decline-refill` are staff-only API actions. |
 | Update visit status | Staff can check in the patient, start the visit, and complete it in sequence. The patient sees the resulting status. | **Implemented** | Role-authorized actions enforce `scheduled` → `checked-in` → `in-progress` → `completed`. |
-| Export visit summary | No export or download action exists. | **Not implemented** | There is no CSV, PDF, or mock download confirmation. |
+| Export visit summary | Patient and staff can download a deterministic CSV summary. | **Implemented** | The browser generates `maria-lopez-visit-summary.csv` with stable QA assertions. |
 
 ## 8. Authentication and MFA comparison
 
@@ -217,15 +214,9 @@ Consequently:
 
 ## 13. Recommended work to close the main gaps
 
-### Priority 1 — Complete the cross-role demo
-
-1. Add a lightweight visit-summary export with a small PDF, CSV, or predictable download confirmation.
-
 ### Priority 2 — Complete the patient feature set
 
-1. Add a small insurance update form and confirmation state.
-2. Add a lab-result detail view.
-3. Add a visit-summary detail view.
+The currently listed patient flows are implemented. Future additions should be driven by new demonstration requirements rather than the original gap list.
 
 ### Priority 3 — Improve test control and safety
 

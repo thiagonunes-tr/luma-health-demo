@@ -8,6 +8,7 @@ export type IconName =
   | "check"
   | "clipboard"
   | "close"
+  | "download"
   | "flask"
   | "heart"
   | "help-circle"
@@ -60,6 +61,11 @@ export function Icon({
     </>,
     close: <>
       <path d="m7 7 10 10M17 7 7 17" />
+    </>,
+    download: <>
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 21h14" />
     </>,
     flask: <>
       <path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4a2 2 0 0 0 1.8-3l-5-9V3" />

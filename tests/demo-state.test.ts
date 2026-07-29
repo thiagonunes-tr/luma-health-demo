@@ -12,6 +12,7 @@ test("recognizes only supported demo actions", () => {
   assert.equal(isDemoStateAction("complete-appointment"), true);
   assert.equal(isDemoStateAction("submit-intake"), true);
   assert.equal(isDemoStateAction("send-message"), true);
+  assert.equal(isDemoStateAction("update-insurance"), true);
   assert.equal(isDemoStateAction("decline-refill"), true);
   assert.equal(isDemoStateAction("overwrite-state"), false);
   assert.equal(isDemoStateAction(null), false);
@@ -130,6 +131,56 @@ test("patient and staff append messages to the shared thread", () => {
     status: 400,
     error: "Enter a message with no more than 500 characters.",
   });
+});
+
+test("patient updates validated insurance information", () => {
+  const updated = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "update-insurance",
+    "patient",
+    {
+      insurance: {
+        provider: " Demo Health ",
+        planName: " QA Gold ",
+        memberId: " QA-9001 ",
+      },
+    },
+  );
+  assert.equal(updated.ok, true);
+  if (!updated.ok) return;
+  assert.deepEqual(updated.state.insurance, {
+    provider: "Demo Health",
+    planName: "QA Gold",
+    memberId: "QA-9001",
+    updatedAt: "July 24, 2026 at 10:05 AM",
+  });
+
+  const invalid = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "update-insurance",
+    "patient",
+    {
+      insurance: {
+        provider: "",
+        planName: "QA Gold",
+        memberId: "QA-9001",
+      },
+    },
+  );
+  assert.deepEqual(invalid, {
+    ok: false,
+    status: 400,
+    error: "Complete every insurance field.",
+  });
+
+  const staffUpdate = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "update-insurance",
+    "staff",
+  );
+  assert.equal(staffUpdate.ok, false);
+  if (staffUpdate.ok) return;
+  assert.equal(staffUpdate.status, 403);
 });
 
 test("patient can submit one pending refill request", () => {

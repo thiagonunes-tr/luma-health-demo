@@ -35,6 +35,7 @@ export async function PATCH(request: NextRequest) {
     appointmentTime?: unknown;
     intake?: unknown;
     messageBody?: unknown;
+    insurance?: unknown;
   };
   try {
     body = await request.json();
@@ -50,6 +51,7 @@ export async function PATCH(request: NextRequest) {
     appointmentTime: body.appointmentTime,
     intake: body.intake,
     messageBody: body.messageBody,
+    insurance: body.insurance,
   });
   if (!result.ok) {
     return NextResponse.json(

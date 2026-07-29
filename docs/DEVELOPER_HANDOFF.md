@@ -262,7 +262,13 @@ Contains one global row with ID `global`. `state_json` currently stores:
   "intakeComplete": false,
   "intakeSubmission": null,
   "refillStatus": "none",
-  "messages": ["Two deterministic starter messages"]
+  "messages": ["Two deterministic starter messages"],
+  "insurance": {
+    "provider": "HealthFirst Demo",
+    "planName": "Silver Care",
+    "memberId": "HF-2048",
+    "updatedAt": "Initial demo record"
+  }
 }
 ```
 
@@ -276,6 +282,7 @@ The employee dashboard consumes every workflow field:
 - `intakeSubmission` stores the patient's reason, symptoms, medication changes, allergies, and deterministic submission time. `intakeComplete` remains as a compatibility/status flag.
 - `refillStatus` controls the staff review card and the status later shown to the patient.
 - `messages` stores the shared patient/care-team thread. Sender identity is derived from the authenticated session.
+- `insurance` stores patient-editable provider, plan, member ID, and a server-generated deterministic update label.
 
 The application reloads this state when an authenticated user enters a portal. It does not currently push changes to already-open sessions or poll for updates.
 
@@ -376,7 +383,7 @@ Requires a valid session. Applies the reset check and returns the current global
 
 Requires a valid session and accepts one role-authorized action:
 
-- Patient: `book-appointment`, `reschedule-appointment`, `cancel-appointment`, `submit-intake`, `complete-intake` (legacy compatibility), `send-message`, `request-refill`
+- Patient: `book-appointment`, `reschedule-appointment`, `cancel-appointment`, `submit-intake`, `complete-intake` (legacy compatibility), `send-message`, `update-insurance`, `request-refill`
 - Staff: `check-in-appointment`, `start-appointment`, `complete-appointment`, `send-message`, `approve-refill`, `decline-refill`
 
 Example:
@@ -387,7 +394,7 @@ Example:
 }
 ```
 
-`submit-intake` requires `reasonForVisit`, `currentSymptoms`, `medicationChanges`, and `allergies`. `send-message` requires a non-empty `messageBody` of at most 500 characters. The response returns the complete persisted state. Invalid payloads return HTTP 400, invalid role/action combinations return HTTP 403, and invalid workflow transitions return HTTP 409.
+`submit-intake` requires `reasonForVisit`, `currentSymptoms`, `medicationChanges`, and `allergies`. `send-message` requires a non-empty `messageBody` of at most 500 characters. `update-insurance` requires provider, plan, and member ID. Lab results and visit summaries are deterministic UI content; the CSV export is generated client-side and does not call the API. The response returns the complete persisted state. Invalid payloads return HTTP 400, invalid role/action combinations return HTTP 403, and invalid workflow transitions return HTTP 409.
 
 ### `DELETE /api/demo-state`
 

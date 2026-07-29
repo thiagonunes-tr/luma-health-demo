@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import {
   DEFAULT_DEMO_STATE,
+  DEFAULT_INSURANCE,
   DEFAULT_INTAKE_SUBMISSION,
   DEFAULT_MESSAGES,
   DemoActorRole,
@@ -9,6 +10,7 @@ import {
   DemoStateAction,
   DemoTransitionResult,
   isDemoMessage,
+  isInsuranceInfo,
   isIntakeSubmission,
   transitionDemoState,
 } from "./demo-state";
@@ -21,6 +23,7 @@ export {
   type AppointmentTime,
   type DemoMessage,
   type IntakeSubmission,
+  type InsuranceInfo,
 } from "./demo-state";
 
 let initialized = false;
@@ -212,6 +215,9 @@ export async function getDemoState(): Promise<DemoState> {
       state.messages.every(isDemoMessage)
       ? state.messages
       : DEFAULT_MESSAGES;
+    const insurance = isInsuranceInfo(state.insurance)
+      ? state.insurance
+      : DEFAULT_INSURANCE;
     return {
       appointmentBooked: ["scheduled", "checked-in", "in-progress"].includes(
         appointmentStatus,
@@ -226,6 +232,7 @@ export async function getDemoState(): Promise<DemoState> {
         ? state.refillStatus
         : "none",
       messages,
+      insurance,
     };
   } catch {
     return DEFAULT_DEMO_STATE;

@@ -226,7 +226,13 @@ The state is global and shared by every session:
       "body": "Thank you. I’ll complete it today.",
       "sentAt": "Jul 24 · 9:18 AM"
     }
-  ]
+  ],
+  "insurance": {
+    "provider": "HealthFirst Demo",
+    "planName": "Silver Care",
+    "memberId": "HF-2048",
+    "updatedAt": "Initial demo record"
+  }
 }
 ```
 
@@ -260,7 +266,13 @@ Requires a valid session and returns:
         "body": "Thank you. I’ll complete it today.",
         "sentAt": "Jul 24 · 9:18 AM"
       }
-    ]
+    ],
+    "insurance": {
+      "provider": "HealthFirst Demo",
+      "planName": "Silver Care",
+      "memberId": "HF-2048",
+      "updatedAt": "Initial demo record"
+    }
   }
 }
 ```
@@ -281,6 +293,7 @@ Patient actions:
 | `submit-intake` | Validates and persists the four-field intake submission |
 | `complete-intake` | Legacy-compatible action that saves the deterministic default intake |
 | `send-message` | Appends a patient message to the shared conversation |
+| `update-insurance` | Validates and persists the patient's coverage fields |
 | `request-refill` | Changes `none` or `rejected` to `pending` |
 
 Booking and rescheduling requests include `appointmentTime`:
@@ -319,6 +332,21 @@ Both roles send a message through the same action:
 
 The body accepts 1–500 trimmed characters. The server supplies `id`, `sender`, and `sentAt`; clients cannot impersonate the other role.
 
+Insurance updates include:
+
+```json
+{
+  "action": "update-insurance",
+  "insurance": {
+    "provider": "Demo Health",
+    "planName": "QA Gold",
+    "memberId": "QA-9001"
+  }
+}
+```
+
+Provider and plan accept 1–80 trimmed characters; member ID accepts 1–40. The server supplies the deterministic `updatedAt` value. This action is patient-only.
+
 The employee portal reads the appointment, intake, and message fields from the same persisted state. A completed intake appears in the request queue with the actual submitted answers.
 
 Employee actions:
@@ -351,7 +379,13 @@ Successful response:
     "intakeComplete": false,
     "intakeSubmission": null,
     "refillStatus": "pending",
-    "messages": ["Default two-message thread omitted for brevity"]
+    "messages": ["Default two-message thread omitted for brevity"],
+    "insurance": {
+      "provider": "HealthFirst Demo",
+      "planName": "Silver Care",
+      "memberId": "HF-2048",
+      "updatedAt": "Initial demo record"
+    }
   }
 }
 ```
@@ -364,7 +398,7 @@ Successful response:
 | `403` | Action is not allowed for the current role |
 | `409` | Transition is incompatible with the current state |
 
-Invalid intake or message payloads return HTTP `400`. Examples of conflicts include advancing an appointment out of sequence, changing an appointment after check-in, requesting an already pending or approved refill, and attempting to approve or decline a refill that is not pending.
+Invalid intake, insurance, or message payloads return HTTP `400`. Examples of conflicts include advancing an appointment out of sequence, changing an appointment after check-in, requesting an already pending or approved refill, and attempting to approve or decline a refill that is not pending.
 
 ### `DELETE /api/demo-state`
 
@@ -379,7 +413,13 @@ Restores the default state without removing registered users:
     "intakeComplete": false,
     "intakeSubmission": null,
     "refillStatus": "none",
-    "messages": ["The deterministic two-message thread is restored"]
+    "messages": ["The deterministic two-message thread is restored"],
+    "insurance": {
+      "provider": "HealthFirst Demo",
+      "planName": "Silver Care",
+      "memberId": "HF-2048",
+      "updatedAt": "Initial demo record"
+    }
   }
 }
 ```
@@ -420,6 +460,6 @@ curl --fail-with-body \
 
 ## Out-of-scope APIs
 
-There are no dedicated endpoints for laboratory-result details, visit summaries, insurance updates, or clinical records. Those areas remain static demo content. Patient search uses a deterministic client-side directory, while appointment lifecycle, structured intake, messaging, and refill review are represented by the shared workflow state.
+There are no dedicated endpoints for laboratory results, visit summaries, or clinical records. The UI exposes deterministic lab and summary details, and generates the visit-summary CSV entirely in the browser. Patient search uses a deterministic client-side directory, while appointment lifecycle, structured intake, messaging, insurance updates, and refill review are represented by the shared workflow state.
 
 For deterministic cross-role automation and parallelism guidance, see [QA Automation Guide](./QA_AUTOMATION.md).
