@@ -33,7 +33,7 @@ The strongest areas are:
 - Separate patient and employee experiences.
 - Appointment booking, intake completion, refill request, and refill approval state changes.
 - Predictable demo data and simple business logic.
-- Password login followed by a real email verification code.
+- Password login followed by a real email verification code, with an explicit bypass for the two fixed demo accounts.
 - Persistent demo users and an automatically resetting shared demo state.
 - A frontend hosted on Vercel and an API hosted on Cloudflare Workers.
 
@@ -134,7 +134,7 @@ The application now provides:
 | Provide simple demo login accounts | Fixed patient and employee credentials remain available and visible for copy and paste. | **Implemented** |
 | Do not prefill credentials | Login fields are empty; demo credentials are presented separately. | **Implemented** |
 | Allow login with a user's own email | A user can create a Patient or Employee account with any valid email and then sign in. | **Intentional extension** |
-| Use password plus MFA for patient and employee | Both roles use the same password-plus-email-code sequence. | **Implemented** |
+| Use password plus MFA for patient and employee | Both roles use the same password-plus-email-code sequence. The two fixed demo accounts may explicitly skip the code after password validation; registered accounts may not. | **Implemented with demo bypass** |
 | Avoid real registration and security infrastructure | The project intentionally implements registration, password hashing, sessions, rate controls, and database-backed users. | **Intentional deviation** |
 | Avoid external email providers | Brevo is used for real MFA delivery. | **Agreed exception** |
 

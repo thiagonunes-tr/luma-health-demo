@@ -55,6 +55,11 @@ export function getRuntimeEnv(): RuntimeEnv {
   return env as unknown as RuntimeEnv;
 }
 
+export function isDemoAccount(email: string): boolean {
+  const normalized = email.trim().toLowerCase();
+  return accounts.some((account) => account.email === normalized);
+}
+
 export async function findAccount(email: string): Promise<DemoAccount | undefined> {
   const normalized = email.trim().toLowerCase();
   const demoAccount = accounts.find((account) => account.email === normalized);

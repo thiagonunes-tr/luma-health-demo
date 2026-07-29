@@ -81,20 +81,32 @@ export default function Home() {
     return () => { active = false; };
   }, [user]);
 
-  async function startLogin(email: string, password: string, requestedRole?: Role) {
+  async function startLogin(
+    email: string,
+    password: string,
+    requestedRole?: Role,
+    skipMfa = false,
+  ) {
     setAuthBusy(true);
     setAuthError("");
     try {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, role: requestedRole }),
+        body: JSON.stringify({ email, password, role: requestedRole, skipMfa }),
       });
       const data = await response.json() as {
         challengeId?: string;
         destination?: string;
+        user?: AuthUser;
         error?: string;
       };
+      if (response.ok && data.user) {
+        setUser(data.user);
+        setChallenge(null);
+        setActiveNav("Overview");
+        return;
+      }
       if (!response.ok || !data.challengeId || !data.destination) {
         throw new Error(data.error ?? "Sign-in could not be completed.");
       }
@@ -272,7 +284,7 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
   challenge: Challenge | null;
   busy: boolean;
   error: string;
-  onLogin: (email: string, password: string, requestedRole?: Role) => Promise<void>;
+  onLogin: (email: string, password: string, requestedRole?: Role, skipMfa?: boolean) => Promise<void>;
   onVerify: (code: string) => Promise<void>;
   onBack: () => void;
   onResend: () => void;
@@ -290,6 +302,7 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
   function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
     void onLogin(
       String(form.get("demo-email") ?? ""),
       String(form.get("demo-password") ?? ""),
@@ -298,6 +311,7 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
         : selectedAccess === "employee"
           ? "staff"
           : "patient",
+      submitter?.value === "skip-mfa",
     );
   }
 
@@ -345,6 +359,9 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
             </fieldset>}
             {error && <p className="auth-error" role="alert">{error}</p>}
             <button className="primary-button auth-submit" type="submit" disabled={busy}>{busy ? "Sending code…" : credentials ? `Continue as ${credentials.label}` : "Create account"}</button>
+            {credentials && <button className="skip-mfa-button" type="submit" value="skip-mfa" disabled={busy}>
+              {busy ? "Signing in…" : "Sign in without two-factor authentication"}
+            </button>}
           </form>
           {credentials ? <div className="demo-credentials" aria-label={`${credentials.label} demo credentials`}>
               <div className="demo-credentials-heading"><strong>{credentials.label} demo credentials</strong><span>Copy and paste above</span></div>

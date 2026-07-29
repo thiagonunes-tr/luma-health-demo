@@ -3,13 +3,17 @@ import {
   HOURLY_EMAIL_LIMIT,
   MFA_TTL_MS,
   RESEND_COOLDOWN_MS,
+  SESSION_COOKIE,
+  SESSION_TTL_SECONDS,
   createUserAccount,
   createMfaCode,
   findAccount,
   hashMfaCode,
   hashPassword,
+  isDemoAccount,
   maskEmail,
   sendMfaEmail,
+  signSession,
   verifyPassword,
 } from "../../../../lib/auth";
 import { getMfaDb } from "../../../../lib/mfa-db";
@@ -17,7 +21,7 @@ import { getMfaDb } from "../../../../lib/mfa-db";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  let body: { email?: unknown; password?: unknown; role?: unknown };
+  let body: { email?: unknown; password?: unknown; role?: unknown; skipMfa?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -26,6 +30,7 @@ export async function POST(request: NextRequest) {
 
   const email = typeof body.email === "string" ? body.email : "";
   const password = typeof body.password === "string" ? body.password : "";
+  const skipMfa = body.skipMfa === true;
   const requestedRole = body.role === "staff"
     ? "staff"
     : body.role === "patient"
@@ -59,6 +64,28 @@ export async function POST(request: NextRequest) {
       { error: "The email or password is incorrect." },
       { status: 401 },
     );
+  }
+
+  if (skipMfa) {
+    if (!isDemoAccount(account.email)) {
+      return NextResponse.json(
+        { error: "Two-factor authentication can only be skipped for demo accounts." },
+        { status: 403 },
+      );
+    }
+
+    const token = await signSession(account);
+    const response = NextResponse.json({
+      user: { email: account.email, name: account.name, role: account.role },
+    });
+    response.cookies.set(SESSION_COOKIE, token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_TTL_SECONDS,
+    });
+    return response;
   }
 
   try {

@@ -1,6 +1,6 @@
 # Luma Health Demo — Developer Handoff
 
-**Last reviewed:** July 23, 2026  
+**Last reviewed:** July 29, 2026
 **Repository:** <https://github.com/thiagonunes-tr/luma-health-demo>  
 **Primary branch:** `main`  
 **Cloudflare Worker:** <https://luma-health-demo.thiago-nunes-5e0.workers.dev>
@@ -17,6 +17,7 @@ The project is intentionally a demonstration environment. It does not contain re
 The currently implemented product requirements are:
 
 - One login flow for patients and employees: email, password, then a six-digit email verification code.
+- The two fixed demo accounts may skip MFA directly from the login form after their password is validated.
 - Real MFA email delivery through Brevo.
 - Two exposed demo accounts whose credentials can be copied from the login screen.
 - Any valid email may create a patient or employee account with its own password.
@@ -136,6 +137,8 @@ The two fixed accounts are declared in `lib/auth.ts` and displayed on the login 
 
 The login fields are deliberately blank. Credentials are shown separately with copy buttons to make automated and manual testing straightforward.
 
+The patient and employee demo login forms display **Sign in without two-factor authentication**. After the backend validates the password, this action creates the session without generating or emailing an MFA challenge. The backend permits the bypass only for the two code-defined demo accounts. Registered personal accounts and pending registrations must still prove email ownership with the six-digit code.
+
 ### New account registration
 
 The **Create account** tab supports first-time registration. This flow works as follows:
@@ -163,6 +166,7 @@ This design is acceptable only for a controlled demo. It is not a production pas
 The MFA implementation has the following controls:
 
 - Six numeric digits.
+- A demo-only bypass after password validation for the two fixed demo accounts.
 - Ten-minute expiration.
 - Maximum five incorrect attempts.
 - Sixty-second resend cooldown.
@@ -299,11 +303,14 @@ Input:
 {
   "email": "patient@example.com",
   "password": "chosen-password",
-  "role": "patient"
+  "role": "patient",
+  "skipMfa": false
 }
 ```
 
 `role` is `patient` or `staff`. It is required by the current frontend and determines the role of a new account. Existing accounts must sign in through the matching role option. Older clients that omit it remain compatible and default new registrations to patient.
+
+`skipMfa: true` signs in directly only when the credentials belong to one of the two fixed demo accounts. Other accounts receive HTTP 403.
 
 Success response:
 
