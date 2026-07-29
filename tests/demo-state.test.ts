@@ -8,6 +8,7 @@ import {
 
 test("recognizes only supported demo actions", () => {
   assert.equal(isDemoStateAction("book-appointment"), true);
+  assert.equal(isDemoStateAction("complete-appointment"), true);
   assert.equal(isDemoStateAction("decline-refill"), true);
   assert.equal(isDemoStateAction("overwrite-state"), false);
   assert.equal(isDemoStateAction(null), false);
@@ -18,11 +19,14 @@ test("patient actions update only their intended field", () => {
     DEFAULT_DEMO_STATE,
     "book-appointment",
     "patient",
+    { appointmentTime: "10:30" },
   );
   assert.equal(booked.ok, true);
   if (!booked.ok) return;
   assert.deepEqual(booked.state, {
     appointmentBooked: true,
+    appointmentStatus: "scheduled",
+    appointmentTime: "10:30",
     intakeComplete: false,
     refillStatus: "none",
   });
@@ -36,6 +40,8 @@ test("patient actions update only their intended field", () => {
   if (!intake.ok) return;
   assert.deepEqual(intake.state, {
     appointmentBooked: true,
+    appointmentStatus: "scheduled",
+    appointmentTime: "10:30",
     intakeComplete: true,
     refillStatus: "none",
   });
@@ -128,6 +134,7 @@ test("patient workflow remains available when staff reviews the refill", () => {
     DEFAULT_DEMO_STATE,
     "book-appointment",
     "patient",
+    { appointmentTime: "10:30" },
   );
   assert.equal(booked.ok, true);
   if (!booked.ok) return;
@@ -157,7 +164,111 @@ test("patient workflow remains available when staff reviews the refill", () => {
   if (!reviewed.ok) return;
   assert.deepEqual(reviewed.state, {
     appointmentBooked: true,
+    appointmentStatus: "scheduled",
+    appointmentTime: "10:30",
     intakeComplete: true,
     refillStatus: "approved",
   });
+});
+
+test("patient can reschedule, cancel, and book again", () => {
+  const booked = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "book-appointment",
+    "patient",
+    { appointmentTime: "09:00" },
+  );
+  assert.equal(booked.ok, true);
+  if (!booked.ok) return;
+
+  const rescheduled = transitionDemoState(
+    booked.state,
+    "reschedule-appointment",
+    "patient",
+    { appointmentTime: "15:00" },
+  );
+  assert.equal(rescheduled.ok, true);
+  if (!rescheduled.ok) return;
+  assert.equal(rescheduled.state.appointmentTime, "15:00");
+
+  const cancelled = transitionDemoState(
+    rescheduled.state,
+    "cancel-appointment",
+    "patient",
+  );
+  assert.equal(cancelled.ok, true);
+  if (!cancelled.ok) return;
+  assert.equal(cancelled.state.appointmentStatus, "cancelled");
+  assert.equal(cancelled.state.appointmentBooked, false);
+
+  const bookedAgain = transitionDemoState(
+    cancelled.state,
+    "book-appointment",
+    "patient",
+    { appointmentTime: "10:30" },
+  );
+  assert.equal(bookedAgain.ok, true);
+  if (!bookedAgain.ok) return;
+  assert.equal(bookedAgain.state.appointmentStatus, "scheduled");
+});
+
+test("staff advances an appointment through the visit lifecycle", () => {
+  const scheduled = {
+    ...DEFAULT_DEMO_STATE,
+    appointmentBooked: true,
+    appointmentStatus: "scheduled" as const,
+  };
+  const checkedIn = transitionDemoState(
+    scheduled,
+    "check-in-appointment",
+    "staff",
+  );
+  assert.equal(checkedIn.ok, true);
+  if (!checkedIn.ok) return;
+  assert.equal(checkedIn.state.appointmentStatus, "checked-in");
+
+  const started = transitionDemoState(
+    checkedIn.state,
+    "start-appointment",
+    "staff",
+  );
+  assert.equal(started.ok, true);
+  if (!started.ok) return;
+  assert.equal(started.state.appointmentStatus, "in-progress");
+
+  const completed = transitionDemoState(
+    started.state,
+    "complete-appointment",
+    "staff",
+  );
+  assert.equal(completed.ok, true);
+  if (!completed.ok) return;
+  assert.equal(completed.state.appointmentStatus, "completed");
+  assert.equal(completed.state.appointmentBooked, false);
+});
+
+test("appointment actions reject invalid payloads and transitions", () => {
+  const missingTime = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "book-appointment",
+    "patient",
+  );
+  assert.deepEqual(missingTime, {
+    ok: false,
+    status: 400,
+    error: "Choose an available appointment time.",
+  });
+
+  const startWithoutCheckIn = transitionDemoState(
+    {
+      ...DEFAULT_DEMO_STATE,
+      appointmentBooked: true,
+      appointmentStatus: "scheduled",
+    },
+    "start-appointment",
+    "staff",
+  );
+  assert.equal(startWithoutCheckIn.ok, false);
+  if (startWithoutCheckIn.ok) return;
+  assert.equal(startWithoutCheckIn.status, 409);
 });

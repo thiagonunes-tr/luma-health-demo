@@ -208,10 +208,14 @@ The state is global and shared by every session:
 ```json
 {
   "appointmentBooked": false,
+  "appointmentStatus": "none",
+  "appointmentTime": "10:30",
   "intakeComplete": false,
   "refillStatus": "none"
 }
 ```
+
+`appointmentStatus` may be `none`, `scheduled`, `checked-in`, `in-progress`, `completed`, or `cancelled`. `appointmentTime` may be `09:00`, `10:30`, or `15:00`.
 
 `refillStatus` may be `none`, `pending`, `approved`, or `rejected`.
 
@@ -223,6 +227,8 @@ Requires a valid session and returns:
 {
   "state": {
     "appointmentBooked": false,
+    "appointmentStatus": "none",
+    "appointmentTime": "10:30",
     "intakeComplete": false,
     "refillStatus": "none"
   }
@@ -239,16 +245,30 @@ Patient actions:
 
 | Action | Result |
 | --- | --- |
-| `book-appointment` | Sets `appointmentBooked` to `true` |
+| `book-appointment` | Creates a scheduled appointment at the supplied `appointmentTime` |
+| `reschedule-appointment` | Changes the time of a scheduled appointment |
+| `cancel-appointment` | Cancels a scheduled appointment |
 | `complete-intake` | Sets `intakeComplete` to `true` |
 | `request-refill` | Changes `none` or `rejected` to `pending` |
 
-The employee portal reads the first two fields from the same persisted state. A booked appointment appears in the clinic schedule with a details dialog, and a completed intake appears in the request queue with a deterministic review dialog.
+Booking and rescheduling requests include `appointmentTime`:
+
+```json
+{
+  "action": "book-appointment",
+  "appointmentTime": "09:00"
+}
+```
+
+The employee portal reads the appointment and intake fields from the same persisted state. An appointment appears in the clinic schedule with its selected time and lifecycle status, and a completed intake appears in the request queue with a deterministic review dialog.
 
 Employee actions:
 
 | Action | Result |
 | --- | --- |
+| `check-in-appointment` | Changes `scheduled` to `checked-in` |
+| `start-appointment` | Changes `checked-in` to `in-progress` |
+| `complete-appointment` | Changes `in-progress` to `completed` |
 | `approve-refill` | Changes `pending` to `approved` |
 | `decline-refill` | Changes `pending` to `rejected` |
 
@@ -266,6 +286,8 @@ Successful response:
 {
   "state": {
     "appointmentBooked": false,
+    "appointmentStatus": "none",
+    "appointmentTime": "10:30",
     "intakeComplete": false,
     "refillStatus": "pending"
   }
@@ -280,7 +302,7 @@ Successful response:
 | `403` | Action is not allowed for the current role |
 | `409` | Transition is incompatible with the current state |
 
-Examples of conflicts include requesting an already pending or approved refill and attempting to approve or decline a refill that is not pending.
+Examples of conflicts include advancing an appointment out of sequence, changing an appointment after check-in, requesting an already pending or approved refill, and attempting to approve or decline a refill that is not pending.
 
 ### `DELETE /api/demo-state`
 
@@ -290,6 +312,8 @@ Restores the default state without removing registered users:
 {
   "state": {
     "appointmentBooked": false,
+    "appointmentStatus": "none",
+    "appointmentTime": "10:30",
     "intakeComplete": false,
     "refillStatus": "none"
   }
@@ -332,6 +356,6 @@ curl --fail-with-body \
 
 ## Out-of-scope APIs
 
-There are no dedicated endpoints for messages, laboratory-result details, visit summaries, patient search, insurance updates, or clinical records. Those areas remain static demo content. Appointment booking, intake completion, and refill review are intentionally represented by the shared workflow state.
+There are no dedicated endpoints for messages, laboratory-result details, visit summaries, insurance updates, or clinical records. Those areas remain static demo content. Patient search uses a deterministic client-side directory, while appointment lifecycle, intake completion, and refill review are represented by the shared workflow state.
 
 For deterministic cross-role automation and parallelism guidance, see [QA Automation Guide](./QA_AUTOMATION.md).

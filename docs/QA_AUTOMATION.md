@@ -38,6 +38,8 @@ After reset, the state is:
 ```json
 {
   "appointmentBooked": false,
+  "appointmentStatus": "none",
+  "appointmentTime": "10:30",
   "intakeComplete": false,
   "refillStatus": "none"
 }
@@ -55,11 +57,16 @@ For complete authentication payloads, response bodies, MFA limits, and status co
 | --- | --- | --- |
 | `GET /api/auth/session` | Anonymous or authenticated | `200` with `{ "user": null }` or the current user |
 | `GET /api/demo-state` | Any authenticated role | Returns the current shared state |
-| `PATCH /api/demo-state` with `book-appointment` | Patient | Sets `appointmentBooked` to `true` |
+| `PATCH /api/demo-state` with `book-appointment` | Patient | Sets the selected time and changes status to `scheduled` |
+| `PATCH /api/demo-state` with `reschedule-appointment` | Patient | Changes the selected time while status is `scheduled` |
+| `PATCH /api/demo-state` with `cancel-appointment` | Patient | Changes `scheduled` to `cancelled` |
 | `PATCH /api/demo-state` with `complete-intake` | Patient | Sets `intakeComplete` to `true` |
 | `PATCH /api/demo-state` with `request-refill` | Patient | Changes refill status from `none` or `rejected` to `pending` |
 | `PATCH /api/demo-state` with `approve-refill` | Employee | Changes refill status from `pending` to `approved` |
 | `PATCH /api/demo-state` with `decline-refill` | Employee | Changes refill status from `pending` to `rejected` |
+| `PATCH /api/demo-state` with `check-in-appointment` | Employee | Changes `scheduled` to `checked-in` |
+| `PATCH /api/demo-state` with `start-appointment` | Employee | Changes `checked-in` to `in-progress` |
+| `PATCH /api/demo-state` with `complete-appointment` | Employee | Changes `in-progress` to `completed` |
 | `DELETE /api/demo-state` | Fixed demo accounts | Restores the default state |
 
 Example action:
@@ -88,21 +95,22 @@ Tests should assert these responses when covering negative paths. The client wai
 
 1. Sign in as the patient using the demo MFA bypass.
 2. Reset the demo state.
-3. Complete intake, book an appointment, and request a refill.
+3. Complete intake, book an appointment, reschedule it, and request a refill.
 4. Sign out.
 5. Sign in as the employee using the demo MFA bypass.
-6. Verify that the new 10:30 AM appointment appears in the clinic schedule and open its details.
-7. Verify that Maria Lopez's submitted intake appears in Requests and open the deterministic form summary.
-8. Verify the pending refill and approve or decline it.
-9. Sign out and sign in again as the patient.
-10. Verify the final refill status.
-11. If the refill was declined, submit a new request and confirm it returns to `pending`.
+6. Search for Maria Lopez and verify that her profile reflects the shared appointment, intake, and refill state.
+7. Verify that the appointment appears at the selected time, then check in the patient, start the visit, and complete it.
+8. Verify that Maria Lopez's submitted intake appears in Requests and open the deterministic form summary.
+9. Verify the pending refill and approve or decline it.
+10. Sign out and sign in again as the patient.
+11. Verify the completed visit and final refill status.
+12. If the refill was declined, submit a new request and confirm it returns to `pending`.
 
 Use accessible names and visible labels when locating UI controls. Wait for the confirmation toast or resulting UI state instead of using fixed timeouts. Do not continue to the next role until the action request has completed.
 
 The employee dashboard derives all three cross-role views from the same persisted state:
 
-- `appointmentBooked: true` adds Maria Lopez's 10:30 AM appointment, updates the appointment metric, and enables the appointment-details dialog.
+- Appointment fields add Maria Lopez at the selected time, expose the lifecycle action appropriate to the current status, and update both portals after each state load.
 - `intakeComplete: true` adds Maria Lopez's submitted form, updates the form and request counts, and enables the intake-review dialog.
 - `refillStatus: "pending"` adds the refill review card; employee approval or rejection is visible to the patient on the next state load.
 

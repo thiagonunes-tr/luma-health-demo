@@ -1,23 +1,22 @@
 "use client";
 
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  AppointmentStatus,
+  AppointmentTime,
+  DemoState,
+  DemoStateAction,
+  RefillStatus,
+} from "../lib/demo-state";
 import { Icon, type IconName } from "./Icon";
 
 type Role = "patient" | "staff";
+type AppointmentAdvanceAction =
+  | "check-in-appointment"
+  | "start-appointment"
+  | "complete-appointment";
 type Toast = { title: string; message: string; tone: "success" | "error" } | null;
 type AuthUser = { email: string; name: string; role: Role };
-type RefillStatus = "none" | "pending" | "approved" | "rejected";
-type DemoAction =
-  | "book-appointment"
-  | "complete-intake"
-  | "request-refill"
-  | "approve-refill"
-  | "decline-refill";
-type DemoState = {
-  appointmentBooked: boolean;
-  intakeComplete: boolean;
-  refillStatus: RefillStatus;
-};
 type Challenge = {
   id: string;
   destination: string;
@@ -34,6 +33,14 @@ type StaffAppointment = {
   fromPatientPortal?: boolean;
 };
 
+type PatientProfile = {
+  name: string;
+  initials: string;
+  dateOfBirth: string;
+  email: string;
+  lastVisit: string;
+};
+
 const appointments: StaffAppointment[] = [
   { time: "8:30 AM", patient: "Riley Smith", type: "Routine visit", status: "Confirmed" },
   { time: "9:15 AM", patient: "Jordan Lee", type: "Follow-up", status: "Waiting" },
@@ -41,13 +48,13 @@ const appointments: StaffAppointment[] = [
   { time: "11:30 AM", patient: "Priya Shah", type: "Follow-up", status: "Confirmed" },
 ];
 
-const patientPortalAppointment: StaffAppointment = {
-  time: "10:30 AM",
-  patient: "Maria Lopez",
-  type: "Follow-up · Patient portal",
-  status: "New booking",
-  fromPatientPortal: true,
-};
+const patientProfiles: PatientProfile[] = [
+  { name: "Maria Lopez", initials: "ML", dateOfBirth: "May 14, 1987", email: "patient.demo@testrigor-mail.com", lastVisit: "July 12, 2026" },
+  { name: "Alex Carter", initials: "AC", dateOfBirth: "September 3, 1991", email: "alex.carter@example.test", lastVisit: "June 28, 2026" },
+  { name: "Priya Shah", initials: "PS", dateOfBirth: "January 22, 1979", email: "priya.shah@example.test", lastVisit: "July 3, 2026" },
+  { name: "Jordan Lee", initials: "JL", dateOfBirth: "November 8, 1984", email: "jordan.lee@example.test", lastVisit: "May 19, 2026" },
+  { name: "Riley Smith", initials: "RS", dateOfBirth: "March 30, 1995", email: "riley.smith@example.test", lastVisit: "June 11, 2026" },
+];
 
 const navItems = ["Overview", "Appointments", "Forms", "Results", "Messages"];
 const navIcons: IconName[] = [
@@ -58,6 +65,25 @@ const navIcons: IconName[] = [
   "message",
 ];
 
+function formatAppointmentTime(time: AppointmentTime): string {
+  return {
+    "09:00": "9:00 AM",
+    "10:30": "10:30 AM",
+    "15:00": "3:00 PM",
+  }[time];
+}
+
+function appointmentStatusLabel(status: AppointmentStatus): string {
+  return {
+    none: "No appointment",
+    scheduled: "Scheduled",
+    "checked-in": "Checked in",
+    "in-progress": "In progress",
+    completed: "Completed",
+    cancelled: "Cancelled",
+  }[status];
+}
+
 export default function Home() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -67,9 +93,13 @@ export default function Home() {
   const [activeNav, setActiveNav] = useState("Overview");
   const [showBooking, setShowBooking] = useState(false);
   const [appointmentBooked, setAppointmentBooked] = useState(false);
+  const [appointmentStatus, setAppointmentStatus] =
+    useState<AppointmentStatus>("none");
+  const [appointmentTime, setAppointmentTime] =
+    useState<AppointmentTime>("10:30");
   const [intakeComplete, setIntakeComplete] = useState(false);
   const [refillStatus, setRefillStatus] = useState<RefillStatus>("none");
-  const [demoBusy, setDemoBusy] = useState<DemoAction | null>(null);
+  const [demoBusy, setDemoBusy] = useState<DemoStateAction | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const toastTimer = useRef<number | null>(null);
 
@@ -210,14 +240,17 @@ export default function Home() {
 
   function applyDemoState(state: DemoState) {
     setAppointmentBooked(state.appointmentBooked);
+    setAppointmentStatus(state.appointmentStatus);
+    setAppointmentTime(state.appointmentTime);
     setIntakeComplete(state.intakeComplete);
     setRefillStatus(state.refillStatus);
   }
 
   async function performDemoAction(
-    action: DemoAction,
+    action: DemoStateAction,
     successTitle: string,
     successMessage: string,
+    input: { appointmentTime?: AppointmentTime } = {},
   ): Promise<boolean> {
     if (demoBusy) return false;
     setDemoBusy(action);
@@ -225,7 +258,7 @@ export default function Home() {
       const response = await fetch("/api/demo-state", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, ...input }),
       });
       const data = await response.json() as { state?: DemoState; error?: string };
       if (!response.ok || !data.state) {
@@ -248,10 +281,23 @@ export default function Home() {
 
   async function bookAppointment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const selectedTime = String(form.get("time")) as AppointmentTime;
+    const isRescheduling = appointmentStatus === "scheduled";
     const saved = await performDemoAction(
-      "book-appointment",
-      "Appointment booked",
-      "Your appointment is confirmed for July 24 at 10:30 AM.",
+      isRescheduling ? "reschedule-appointment" : "book-appointment",
+      isRescheduling ? "Appointment rescheduled" : "Appointment booked",
+      `Your appointment is confirmed for July 24 at ${formatAppointmentTime(selectedTime)}.`,
+      { appointmentTime: selectedTime },
+    );
+    if (saved) setShowBooking(false);
+  }
+
+  async function cancelAppointment() {
+    const saved = await performDemoAction(
+      "cancel-appointment",
+      "Appointment cancelled",
+      "The clinic schedule and your portal have been updated.",
     );
     if (saved) setShowBooking(false);
   }
@@ -278,6 +324,25 @@ export default function Home() {
       "Refill declined",
       "The patient can now submit a new request.",
     );
+  }
+
+  async function advanceAppointment(action: AppointmentAdvanceAction) {
+    const copy = {
+      "check-in-appointment": {
+        title: "Patient checked in",
+        message: "Maria Lopez is ready for the clinical team.",
+      },
+      "start-appointment": {
+        title: "Visit started",
+        message: "The appointment is now in progress.",
+      },
+      "complete-appointment": {
+        title: "Visit completed",
+        message: "The completed status is now visible in the patient portal.",
+      },
+    }[action];
+    if (!copy) return;
+    await performDemoAction(action, copy.title, copy.message);
   }
 
   if (authLoading) return <AuthLoading />;
@@ -348,7 +413,8 @@ export default function Home() {
             patientName={displayName.split(/\s+/)[0] || "there"}
             activeNav={activeNav}
             dateLabel={dateLabel}
-            appointmentBooked={appointmentBooked}
+            appointmentStatus={appointmentStatus}
+            appointmentTime={appointmentTime}
             intakeComplete={intakeComplete}
             refillStatus={refillStatus}
             busy={demoBusy !== null}
@@ -364,11 +430,14 @@ export default function Home() {
           <StaffDashboard
             staffName={displayName.split(/\s+/)[0] || "there"}
             appointmentBooked={appointmentBooked}
+            appointmentStatus={appointmentStatus}
+            appointmentTime={appointmentTime}
             intakeComplete={intakeComplete}
             refillStatus={refillStatus}
             busy={demoBusy !== null}
             onApproveRefill={approveRefill}
             onDeclineRefill={declineRefill}
+            onAdvanceAppointment={advanceAppointment}
           />
         )}
 
@@ -377,7 +446,7 @@ export default function Home() {
         </nav>
       </section>
 
-      {showBooking && <BookingModal busy={demoBusy === "book-appointment"} onClose={() => setShowBooking(false)} onSubmit={bookAppointment} />}
+      {showBooking && <BookingModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} busy={demoBusy !== null} onCancel={cancelAppointment} onClose={() => setShowBooking(false)} onSubmit={bookAppointment} />}
       {toast && <div className={`toast ${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"}><span><Icon name={toast.tone === "error" ? "alert-circle" : "check"} size={16} /></span><div><strong>{toast.title}</strong><p>{toast.message}</p></div><button onClick={() => setToast(null)} aria-label="Close"><Icon name="close" size={17} /></button></div>}
     </main>
   );
@@ -505,11 +574,12 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
   </main>;
 }
 
-function PatientDashboard({ patientName, activeNav, dateLabel, appointmentBooked, intakeComplete, refillStatus, busy, onBook, onCompleteIntake, onRequestRefill }: {
+function PatientDashboard({ patientName, activeNav, dateLabel, appointmentStatus, appointmentTime, intakeComplete, refillStatus, busy, onBook, onCompleteIntake, onRequestRefill }: {
   patientName: string;
   activeNav: string;
   dateLabel: string;
-  appointmentBooked: boolean;
+  appointmentStatus: AppointmentStatus;
+  appointmentTime: AppointmentTime;
   intakeComplete: boolean;
   refillStatus: RefillStatus;
   busy: boolean;
@@ -517,29 +587,36 @@ function PatientDashboard({ patientName, activeNav, dateLabel, appointmentBooked
   onCompleteIntake: () => void | Promise<unknown>;
   onRequestRefill: () => void | Promise<unknown>;
 }) {
+  const hasActiveAppointment = ["scheduled", "checked-in", "in-progress"].includes(
+    appointmentStatus,
+  );
+  const canBookAppointment = ["none", "cancelled", "completed"].includes(
+    appointmentStatus,
+  );
+
   return <div className="page-content">
     <div className="welcome-row">
       <div><p className="eyebrow">PATIENT PORTAL</p><h1>{activeNav === "Overview" ? `Hello, ${patientName}.` : activeNav}</h1><p className="subtitle">{activeNav === "Overview" ? "Here is a summary of your care today." : "Keep track of your health information in one place."}</p></div>
-      <button className="primary-button" onClick={onBook}><Icon name="plus" size={17} /> Book appointment</button>
+      <button className="primary-button" onClick={onBook}><Icon name={canBookAppointment ? "plus" : "calendar"} size={17} /> {canBookAppointment ? "Book appointment" : "Manage appointment"}</button>
     </div>
 
     <section className="hero-card">
       <div className="hero-copy">
-        <span className="status-pill"><i></i> NEXT APPOINTMENT</span>
-        <p className="hero-date">{appointmentBooked ? "July 24" : "Today, July 24"}</p>
-        <h2>{appointmentBooked ? "Follow-up appointment" : "Appointment with Dr. Ana Costa"}</h2>
+        <span className="status-pill"><i></i> {appointmentStatusLabel(appointmentStatus).toUpperCase()}</span>
+        <p className="hero-date">{hasActiveAppointment ? "July 24" : "Patient portal"}</p>
+        <h2>{hasActiveAppointment ? "Follow-up appointment" : appointmentStatus === "completed" ? "Visit completed" : appointmentStatus === "cancelled" ? "Appointment cancelled" : "No appointment scheduled"}</h2>
         <p className="doctor"><span className="doctor-avatar">AC</span><span><strong>Dr. Ana Costa</strong><small>Primary Care · Room 204</small></span></p>
       </div>
       <div className="appointment-time">
-        <strong>{appointmentBooked ? "10:30 AM" : "2:30 PM"}</strong><span>local time</span>
-        <button>View details <Icon name="arrow-right" size={13} /></button>
+        <strong>{hasActiveAppointment ? formatAppointmentTime(appointmentTime) : appointmentStatus === "completed" ? "DONE" : "—"}</strong><span>{hasActiveAppointment ? "local time" : "book when ready"}</span>
+        <button onClick={onBook}>{canBookAppointment ? "Book now" : "View details"} <Icon name="arrow-right" size={13} /></button>
       </div>
       <div className="hero-decoration" aria-hidden="true"><i></i><b></b><em></em></div>
     </section>
 
     <div className="section-heading"><div><h2>Quick actions</h2><p>What would you like to do?</p></div></div>
     <section className="quick-grid">
-      <QuickCard color="blue" icon="calendar" title="Book an appointment" text="Choose the best date and time" action="Book now" onClick={onBook} />
+      <QuickCard color="blue" icon="calendar" title={canBookAppointment ? "Book an appointment" : "Manage appointment"} text={hasActiveAppointment ? `${appointmentStatusLabel(appointmentStatus)} · ${formatAppointmentTime(appointmentTime)}` : appointmentStatus === "cancelled" ? "Previous appointment cancelled" : appointmentStatus === "completed" ? "Previous visit completed" : "Choose the best date and time"} action={canBookAppointment ? "Book now" : appointmentStatus === "scheduled" ? "Reschedule or cancel" : "View status"} onClick={onBook} />
       <QuickCard color="coral" icon="clipboard" title="Intake form" text={intakeComplete ? "Form submitted successfully" : "Takes about 3 minutes"} action={intakeComplete ? "Completed" : "Complete form"} onClick={onCompleteIntake} done={intakeComplete} disabled={busy || intakeComplete} />
       <QuickCard color="mint" icon="pill" title="Request a refill" text={refillStatus === "approved" ? "Refill approved by the clinic" : refillStatus === "pending" ? "Under staff review" : refillStatus === "rejected" ? "The clinic declined the previous request" : "Request it quickly and securely"} action={refillStatus === "approved" ? "Approved" : refillStatus === "pending" ? "Under review" : refillStatus === "rejected" ? "Request again" : "Request refill"} onClick={onRequestRefill} done={refillStatus === "pending" || refillStatus === "approved"} disabled={busy || refillStatus === "pending" || refillStatus === "approved"} />
     </section>
@@ -565,30 +642,45 @@ function PatientDashboard({ patientName, activeNav, dateLabel, appointmentBooked
 function StaffDashboard({
   staffName,
   appointmentBooked,
+  appointmentStatus,
+  appointmentTime,
   intakeComplete,
   refillStatus,
   busy,
   onApproveRefill,
   onDeclineRefill,
+  onAdvanceAppointment,
 }: {
   staffName: string;
   appointmentBooked: boolean;
+  appointmentStatus: AppointmentStatus;
+  appointmentTime: AppointmentTime;
   intakeComplete: boolean;
   refillStatus: RefillStatus;
   busy: boolean;
   onApproveRefill: () => void | Promise<unknown>;
   onDeclineRefill: () => void | Promise<unknown>;
+  onAdvanceAppointment: (action: AppointmentAdvanceAction) => void | Promise<unknown>;
 }) {
   const [showAppointmentDetails, setShowAppointmentDetails] = useState(false);
   const [showIntakeReview, setShowIntakeReview] = useState(false);
-  const staffAppointments = appointmentBooked
-    ? [...appointments.slice(0, 3), patientPortalAppointment, ...appointments.slice(3)]
+  const [showPatientSearch, setShowPatientSearch] = useState(false);
+  const portalAppointment: StaffAppointment = {
+    time: formatAppointmentTime(appointmentTime),
+    patient: "Maria Lopez",
+    type: "Follow-up · Patient portal",
+    status: appointmentStatusLabel(appointmentStatus),
+    fromPatientPortal: true,
+  };
+  const appointmentVisible = appointmentStatus !== "none";
+  const staffAppointments = appointmentVisible
+    ? [...appointments.slice(0, 3), portalAppointment, ...appointments.slice(3)]
     : appointments;
   const requestCount =
     2 + Number(refillStatus === "pending") + Number(intakeComplete);
 
   return <div className="page-content">
-    <div className="welcome-row"><div><p className="eyebrow">CLINIC DASHBOARD</p><h1>Good morning, {staffName}.</h1><p className="subtitle">Track today&apos;s schedule and requests that need attention.</p></div><button className="secondary-button"><Icon name="search" size={16} /> Search patients</button></div>
+    <div className="welcome-row"><div><p className="eyebrow">CLINIC DASHBOARD</p><h1>Good morning, {staffName}.</h1><p className="subtitle">Track today&apos;s schedule and requests that need attention.</p></div><button className="secondary-button" onClick={() => setShowPatientSearch(true)}><Icon name="search" size={16} /> Search patients</button></div>
     <section className="metric-grid">
       <Metric value={appointmentBooked ? "13" : "12"} label="Appointments today" detail={appointmentBooked ? "1 new from patient portal" : "4 waiting"} tone="blue" />
       <Metric value={refillStatus === "pending" ? "3" : "2"} label="Pending refills" detail="Review requests" tone="coral" />
@@ -608,8 +700,9 @@ function StaffDashboard({
         <div className="request-card"><div className="request-top"><span className="patient-avatar peach">PS</span><div><strong>Priya Shah</strong><small>Appointment change</small></div><span>28 min</span></div><button className="text-action">Open request <Icon name="arrow-right" size={13} /></button></div>
       </div>
     </section>
-    {showAppointmentDetails && <AppointmentReviewModal onClose={() => setShowAppointmentDetails(false)} />}
+    {showAppointmentDetails && <AppointmentReviewModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} busy={busy} onAdvance={onAdvanceAppointment} onClose={() => setShowAppointmentDetails(false)} />}
     {showIntakeReview && <IntakeReviewModal onClose={() => setShowIntakeReview(false)} />}
+    {showPatientSearch && <PatientSearchModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} intakeComplete={intakeComplete} refillStatus={refillStatus} onClose={() => setShowPatientSearch(false)} />}
   </div>;
 }
 
@@ -625,12 +718,28 @@ function Metric({ value, label, detail, tone }: { value: string; label: string; 
   return <div className={`metric-card ${tone}`}><span className="metric-dot"></span><strong>{value}</strong><h3>{label}</h3><p>{detail} <Icon name="arrow-right" size={12} /></p></div>;
 }
 
-function BookingModal({ busy, onClose, onSubmit }: { busy: boolean; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void> }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="booking-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close" disabled={busy}><Icon name="close" size={18} /></button><p className="eyebrow">NEW APPOINTMENT</p><h2 id="booking-title">Find a time</h2><p>Choose a specialty and the time that works best for you.</p><form onSubmit={onSubmit}><label>Specialty<select defaultValue="Primary Care"><option>Primary Care</option><option>Cardiology</option><option>Dermatology</option></select></label><label>Provider<select defaultValue="Dr. Ana Costa"><option>Dr. Ana Costa</option><option>Dr. John Lima</option></select></label><fieldset><legend>Available times · July 24</legend><div className="time-options"><label><input type="radio" name="time" value="09:00" />9:00 AM</label><label><input type="radio" name="time" value="10:30" defaultChecked />10:30 AM</label><label><input type="radio" name="time" value="15:00" />3:00 PM</label></div></fieldset><button className="primary-button full" type="submit" disabled={busy}>{busy ? "Saving…" : "Confirm appointment"}</button></form></div></div>;
+function BookingModal({ appointmentStatus, appointmentTime, busy, onCancel, onClose, onSubmit }: { appointmentStatus: AppointmentStatus; appointmentTime: AppointmentTime; busy: boolean; onCancel: () => void | Promise<void>; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void> }) {
+  const canManage = appointmentStatus === "scheduled";
+  const canBook = ["none", "cancelled", "completed"].includes(appointmentStatus);
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="booking-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close" disabled={busy}><Icon name="close" size={18} /></button><p className="eyebrow">{canManage ? "MANAGE APPOINTMENT" : canBook ? "NEW APPOINTMENT" : "APPOINTMENT STATUS"}</p><h2 id="booking-title">{canManage ? "Reschedule or cancel" : canBook ? "Find a time" : appointmentStatusLabel(appointmentStatus)}</h2><p>{canManage || canBook ? "Choose the time that works best for you." : "The clinic has already started processing this visit, so changes are no longer available."}</p>{canManage || canBook ? <form onSubmit={onSubmit}><label>Specialty<select defaultValue="Primary Care"><option>Primary Care</option><option>Cardiology</option><option>Dermatology</option></select></label><label>Provider<select defaultValue="Dr. Ana Costa"><option>Dr. Ana Costa</option><option>Dr. John Lima</option></select></label><fieldset><legend>Available times · July 24</legend><div className="time-options"><label><input type="radio" name="time" value="09:00" defaultChecked={appointmentTime === "09:00"} />9:00 AM</label><label><input type="radio" name="time" value="10:30" defaultChecked={appointmentTime === "10:30"} />10:30 AM</label><label><input type="radio" name="time" value="15:00" defaultChecked={appointmentTime === "15:00"} />3:00 PM</label></div></fieldset><button className="primary-button full" type="submit" disabled={busy}>{busy ? "Saving…" : canManage ? "Save new time" : "Confirm appointment"}</button>{canManage && <button className="danger-button full" type="button" onClick={onCancel} disabled={busy}>Cancel appointment</button>}</form> : <><dl className="review-details"><div><dt>Date and time</dt><dd>July 24 · {formatAppointmentTime(appointmentTime)}</dd></div><div><dt>Provider</dt><dd>Dr. Ana Costa</dd></div><div><dt>Status</dt><dd><span className="review-status">{appointmentStatusLabel(appointmentStatus)}</span></dd></div></dl><button className="primary-button full" onClick={onClose}>Done</button></>}</div></div>;
 }
 
-function AppointmentReviewModal({ onClose }: { onClose: () => void }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="appointment-review-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close"><Icon name="close" size={18} /></button><p className="eyebrow">PATIENT PORTAL BOOKING</p><h2 id="appointment-review-title">Appointment details</h2><p>This appointment was booked by Maria Lopez and is now part of the clinic schedule.</p><dl className="review-details"><div><dt>Patient</dt><dd>Maria Lopez</dd></div><div><dt>Date and time</dt><dd>July 24 · 10:30 AM</dd></div><div><dt>Provider</dt><dd>Dr. Ana Costa</dd></div><div><dt>Visit type</dt><dd>Primary Care · Follow-up</dd></div><div><dt>Status</dt><dd><span className="review-status">New booking</span></dd></div></dl><button className="primary-button full" onClick={onClose}>Done</button></div></div>;
+function AppointmentReviewModal({ appointmentStatus, appointmentTime, busy, onAdvance, onClose }: { appointmentStatus: AppointmentStatus; appointmentTime: AppointmentTime; busy: boolean; onAdvance: (action: AppointmentAdvanceAction) => void | Promise<unknown>; onClose: () => void }) {
+  const nextAction = {
+    scheduled: { action: "check-in-appointment" as const, label: "Check in patient" },
+    "checked-in": { action: "start-appointment" as const, label: "Start visit" },
+    "in-progress": { action: "complete-appointment" as const, label: "Complete visit" },
+  }[appointmentStatus as "scheduled" | "checked-in" | "in-progress"];
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="appointment-review-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close"><Icon name="close" size={18} /></button><p className="eyebrow">PATIENT PORTAL BOOKING</p><h2 id="appointment-review-title">Appointment details</h2><p>This appointment was booked by Maria Lopez and is part of the shared clinic schedule.</p><dl className="review-details"><div><dt>Patient</dt><dd>Maria Lopez</dd></div><div><dt>Date and time</dt><dd>July 24 · {formatAppointmentTime(appointmentTime)}</dd></div><div><dt>Provider</dt><dd>Dr. Ana Costa</dd></div><div><dt>Visit type</dt><dd>Primary Care · Follow-up</dd></div><div><dt>Status</dt><dd><span className="review-status">{appointmentStatusLabel(appointmentStatus)}</span></dd></div></dl>{nextAction && <button className="primary-button full" disabled={busy} onClick={() => void onAdvance(nextAction.action)}>{busy ? "Saving…" : nextAction.label}</button>}<button className="secondary-button full" onClick={onClose}>Close</button></div></div>;
+}
+
+function PatientSearchModal({ appointmentStatus, appointmentTime, intakeComplete, refillStatus, onClose }: { appointmentStatus: AppointmentStatus; appointmentTime: AppointmentTime; intakeComplete: boolean; refillStatus: RefillStatus; onClose: () => void }) {
+  const [query, setQuery] = useState("");
+  const [selectedPatient, setSelectedPatient] = useState<PatientProfile | null>(null);
+  const results = patientProfiles.filter(patient =>
+    patient.name.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal patient-search-modal" role="dialog" aria-modal="true" aria-labelledby="patient-search-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close"><Icon name="close" size={18} /></button>{selectedPatient ? <><button className="auth-back" type="button" onClick={() => setSelectedPatient(null)}><Icon name="arrow-left" size={14} /> Back to results</button><p className="eyebrow">PATIENT PROFILE</p><div className="patient-profile-heading"><span className="patient-avatar">{selectedPatient.initials}</span><div><h2 id="patient-search-title">{selectedPatient.name}</h2><p>{selectedPatient.email}</p></div></div><dl className="review-details"><div><dt>Date of birth</dt><dd>{selectedPatient.dateOfBirth}</dd></div><div><dt>Last visit</dt><dd>{selectedPatient.lastVisit}</dd></div>{selectedPatient.name === "Maria Lopez" && <><div><dt>Appointment</dt><dd>{appointmentStatusLabel(appointmentStatus)}{appointmentStatus !== "none" ? ` · ${formatAppointmentTime(appointmentTime)}` : ""}</dd></div><div><dt>Intake</dt><dd>{intakeComplete ? "Submitted" : "Not submitted"}</dd></div><div><dt>Refill</dt><dd>{refillStatus === "none" ? "No request" : refillStatus}</dd></div></>}</dl><p className="demo-disclaimer">Predictable demo profile · No real patient data</p></> : <><p className="eyebrow">PATIENT DIRECTORY</p><h2 id="patient-search-title">Search patients</h2><p>Find a predictable demo patient by name.</p><label className="patient-search-input"><span>Patient name</span><div><Icon name="search" size={17} /><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="Search by name" /></div></label><div className="patient-results" aria-live="polite">{results.map(patient => <button key={patient.email} onClick={() => setSelectedPatient(patient)}><span className="patient-avatar">{patient.initials}</span><span><strong>{patient.name}</strong><small>{patient.email}</small></span><Icon name="arrow-right" size={15} /></button>)}{results.length === 0 && <p>No patients found.</p>}</div></>} </div></div>;
 }
 
 function IntakeReviewModal({ onClose }: { onClose: () => void }) {

@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import {
   DEFAULT_DEMO_STATE,
   DemoActorRole,
+  DemoActionInput,
   DemoState,
   DemoStateAction,
   DemoTransitionResult,
@@ -12,6 +13,8 @@ export {
   DEFAULT_DEMO_STATE,
   type DemoState,
   type DemoStateAction,
+  type AppointmentStatus,
+  type AppointmentTime,
 } from "./demo-state";
 
 let initialized = false;
@@ -176,9 +179,30 @@ export async function getDemoState(): Promise<DemoState> {
   if (!record) return DEFAULT_DEMO_STATE;
 
   try {
-    const state = JSON.parse(record.state_json) as DemoState;
+    const state = JSON.parse(record.state_json) as Partial<DemoState>;
+    const appointmentStatus: AppointmentStatus = [
+      "none",
+      "scheduled",
+      "checked-in",
+      "in-progress",
+      "completed",
+      "cancelled",
+    ].includes(String(state.appointmentStatus))
+      ? state.appointmentStatus as AppointmentStatus
+      : state.appointmentBooked
+        ? "scheduled"
+        : "none";
+    const appointmentTime: AppointmentTime = ["09:00", "10:30", "15:00"].includes(
+      String(state.appointmentTime),
+    )
+      ? state.appointmentTime as AppointmentTime
+      : "10:30";
     return {
-      appointmentBooked: Boolean(state.appointmentBooked),
+      appointmentBooked: ["scheduled", "checked-in", "in-progress"].includes(
+        appointmentStatus,
+      ),
+      appointmentStatus,
+      appointmentTime,
       intakeComplete: Boolean(state.intakeComplete),
       refillStatus: ["none", "pending", "approved", "rejected"].includes(
         state.refillStatus,
@@ -208,9 +232,10 @@ export async function saveDemoState(state: DemoState): Promise<DemoState> {
 export async function applyDemoStateAction(
   action: DemoStateAction,
   role: DemoActorRole,
+  input: DemoActionInput = {},
 ): Promise<DemoTransitionResult> {
   const currentState = await getDemoState();
-  const transition = transitionDemoState(currentState, action, role);
+  const transition = transitionDemoState(currentState, action, role, input);
   if (!transition.ok) return transition;
 
   await saveDemoState(transition.state);

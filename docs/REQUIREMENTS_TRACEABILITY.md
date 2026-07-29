@@ -82,7 +82,7 @@ Desktop web and mobile web are covered. The employee workflow is covered through
 
 | Original requirement | Current implementation | Status | Evidence and notes |
 | --- | --- | --- | --- |
-| Book appointment | The patient opens an appointment modal, selects an available time, confirms the booking, and sees the updated appointment state. | **Implemented** | `PatientDashboard`, `AppointmentModal`, and `bookAppointment` in `shared/LumaApp.tsx`; state persists through `/api/demo-state`. |
+| Book appointment | The patient selects an available time, books, reschedules, or cancels, and sees the shared lifecycle status. | **Implemented** | Appointment actions persist selected time and status through `/api/demo-state`. |
 | Fill intake form | The patient can complete an intake task and persist its completed state. | **Partial** | The action is testable, but there is no multi-field intake form or reviewable form content. |
 | View lab results | A lab result is displayed in recent activity. | **Partial** | The result is visible, but its action does not open a detailed result page or document. |
 | Update insurance information | No editable insurance workflow is present. | **Not implemented** | No insurance form, API state, or confirmation flow exists. |
@@ -94,11 +94,11 @@ Desktop web and mobile web are covered. The employee workflow is covered through
 
 | Original requirement | Current implementation | Status | Evidence and notes |
 | --- | --- | --- | --- |
-| Search patient | A Search patients button is visible. | **Partial** | The button does not open a search interface or return predictable patient results. |
-| Review appointment queue | The clinic dashboard displays schedule metrics and a list of appointments with statuses. A booking made by the patient appears as a new 10:30 AM schedule entry with a details dialog. | **Implemented** | `StaffDashboard` derives the schedule entry and metric from `appointmentBooked`. |
+| Search patient | Staff can filter a deterministic directory, open a patient profile, inspect shared state, and verify an empty result. | **Implemented** | `PatientSearchModal` exposes five fictional profiles; Maria reflects the current appointment, intake, and refill state. |
+| Review appointment queue | The clinic dashboard displays schedule metrics and a list of appointments with statuses. A patient booking appears at its selected time with a details dialog. | **Implemented** | `StaffDashboard` derives the schedule entry, time, lifecycle status, and metric from the shared appointment state. |
 | Review intake form | A form completed by the patient appears in the employee request queue and opens a deterministic submitted-intake summary. | **Implemented** | `StaffDashboard` derives the request, counts, and review dialog from `intakeComplete`. |
 | Approve/reject refill request | Staff can approve or decline a pending refill and the resulting state is visible to the patient. | **Implemented** | `approve-refill` and `decline-refill` are staff-only API actions. |
-| Update visit status | No employee action changes a visit status. | **Not implemented** | Appointment status badges are static. |
+| Update visit status | Staff can check in the patient, start the visit, and complete it in sequence. The patient sees the resulting status. | **Implemented** | Role-authorized actions enforce `scheduled` → `checked-in` → `in-progress` → `completed`. |
 | Export visit summary | No export or download action exists. | **Not implemented** | There is no CSV, PDF, or mock download confirmation. |
 
 ## 8. Authentication and MFA comparison
@@ -219,9 +219,7 @@ Consequently:
 
 ### Priority 1 — Complete the cross-role demo
 
-1. Add a simple, deterministic patient search.
-2. Add an employee action to update visit status.
-3. Add a lightweight visit-summary export with a small PDF, CSV, or predictable download confirmation.
+1. Add a lightweight visit-summary export with a small PDF, CSV, or predictable download confirmation.
 
 ### Priority 2 — Complete the patient feature set
 

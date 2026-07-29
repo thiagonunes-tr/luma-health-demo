@@ -257,6 +257,8 @@ Contains one global row with ID `global`. `state_json` currently stores:
 ```json
 {
   "appointmentBooked": false,
+  "appointmentStatus": "none",
+  "appointmentTime": "10:30",
   "intakeComplete": false,
   "refillStatus": "none"
 }
@@ -268,7 +270,7 @@ This state is global, not per user. A change made by one signed-in user is visib
 
 The employee dashboard consumes every workflow field:
 
-- `appointmentBooked` adds Maria Lopez's portal booking to the clinic schedule and appointment metric.
+- Appointment fields add Maria Lopez's selected time and lifecycle status to the clinic schedule and patient profile.
 - `intakeComplete` adds Maria Lopez's form to the request queue and exposes a deterministic review dialog.
 - `refillStatus` controls the staff review card and the status later shown to the patient.
 
@@ -371,8 +373,8 @@ Requires a valid session. Applies the reset check and returns the current global
 
 Requires a valid session and accepts one role-authorized action:
 
-- Patient: `book-appointment`, `complete-intake`, `request-refill`
-- Staff: `approve-refill`, `decline-refill`
+- Patient: `book-appointment`, `reschedule-appointment`, `cancel-appointment`, `complete-intake`, `request-refill`
+- Staff: `check-in-appointment`, `start-appointment`, `complete-appointment`, `approve-refill`, `decline-refill`
 
 Example:
 
@@ -582,6 +584,7 @@ For deterministic setup, negative-path expectations, cross-role sequencing, and 
 - The code expires after ten minutes.
 - Successful verification creates a session.
 - Appointment, intake, and refill actions update the UI.
+- Patients can book, reschedule, and cancel while the appointment is still scheduled.
 - Reloading restores the persisted global state.
 - The employee dashboard displays the patient's new appointment and submitted intake.
 - Staff can open deterministic appointment details and intake-review dialogs.
@@ -602,6 +605,8 @@ For deterministic setup, negative-path expectations, cross-role sequencing, and 
 - Employee credentials can be copied.
 - MFA is delivered to the employee demo email.
 - Employee access opens the clinic dashboard.
+- Patient search returns predictable profiles and a deterministic empty state.
+- Staff can move the portal appointment through scheduled, checked-in, in-progress, and completed states.
 - Staff can observe, approve, or decline a pending refill in the shared state.
 - Staff metrics, schedule, and request counts reflect the patient's persisted appointment and intake actions.
 
