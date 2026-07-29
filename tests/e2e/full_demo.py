@@ -12,7 +12,7 @@ from playwright.sync_api import Page, sync_playwright
 ROOT = Path(__file__).resolve().parents[2]
 ARTIFACTS = ROOT / "test-results" / "e2e"
 DEV_VARS = ROOT / ".dev.vars"
-BASE_URL = os.environ.get("E2E_BASE_URL", "http://127.0.0.1:4173")
+BASE_URL = os.environ.get("E2E_BASE_URL", "http://localhost:4173")
 PARSED_BASE_URL = urlparse(BASE_URL)
 HOST = PARSED_BASE_URL.hostname or "127.0.0.1"
 PORT = PARSED_BASE_URL.port or 4173
