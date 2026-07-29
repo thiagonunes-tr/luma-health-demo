@@ -91,7 +91,7 @@ def verify_api_docs(page: Page) -> None:
   operation.click()
   operation.get_by_role("button", name="Try it out").click()
   operation.get_by_role("button", name="Execute").click()
-  operation.locator(".response-col_status").get_by_text(
+  operation.locator(".live-responses-table .response-col_status").get_by_text(
     "200", exact=True
   ).wait_for()
 
