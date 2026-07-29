@@ -89,6 +89,8 @@ https://github.com/thiagonunes-tr/luma-health-demo.git
 
 Vercel is connected to the `main` branch. A push to `main` should trigger a new Vercel build automatically.
 
+GitHub Actions also validates both build targets and deploys the Cloudflare Worker after every push to `main`. Together, these integrations publish the frontend and backend from the same commit.
+
 ## 3. Code organization
 
 | Path | Responsibility |
@@ -484,6 +486,8 @@ Deploy:
 ```bash
 npx wrangler deploy
 ```
+
+For normal production releases, manual deployment is unnecessary. The workflow in `.github/workflows/deploy.yml` runs lint, builds both deployment targets, and deploys the Worker whenever a commit reaches `main`. It requires the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` GitHub Actions secrets.
 
 After deployment, confirm that the Worker still has:
 
