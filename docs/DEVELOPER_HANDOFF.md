@@ -269,10 +269,13 @@ Contains one global row with ID `global`. `state_json` currently stores:
   "appointmentBooked": false,
   "appointmentStatus": "none",
   "appointmentTime": "10:30",
+  "appointmentProvider": null,
+  "appointmentSpecialty": null,
   "intakeComplete": false,
   "intakeSubmission": null,
   "refillStatus": "none",
   "messages": ["Two deterministic starter messages"],
+  "lastRead": { "patient": null, "staff": null },
   "insurance": {
     "provider": "HealthFirst Demo",
     "planName": "Silver Care",
@@ -292,6 +295,8 @@ The employee dashboard consumes every workflow field:
 - `intakeSubmission` stores the patient's reason, symptoms, medication changes, allergies, and deterministic submission time. `intakeComplete` remains as a compatibility/status flag.
 - `refillStatus` controls the staff review card and the status later shown to the patient.
 - `messages` stores the shared patient/care-team thread. Sender identity is derived from the authenticated session.
+- `lastRead` stores the id of the last message each role has read, so the navigation badge can show an unread count instead of the thread length. `mark-messages-read` updates only the calling role's entry, and a marker pointing at a message that no longer exists is discarded on read.
+- `appointmentProvider` and `appointmentSpecialty` store the choices made in the booking form. They are cleared on cancellation and are `null` before the first booking.
 - `insurance` stores patient-editable provider, plan, member ID, and a server-generated deterministic update label.
 
 The application reloads this state when an authenticated user enters a portal. It does not currently push changes to already-open sessions or poll for updates.
@@ -410,8 +415,10 @@ Requires a valid session. Applies the reset check and returns the current global
 
 Requires a valid session and accepts one role-authorized action:
 
-- Patient: `book-appointment`, `reschedule-appointment`, `cancel-appointment`, `submit-intake`, `complete-intake` (legacy compatibility), `send-message`, `update-insurance`, `request-refill`
-- Staff: `check-in-appointment`, `start-appointment`, `complete-appointment`, `send-message`, `approve-refill`, `decline-refill`
+- Patient: `book-appointment`, `confirm-appointment`, `reschedule-appointment`, `cancel-appointment`, `check-in-appointment`, `submit-intake`, `complete-intake` (legacy compatibility), `send-message`, `mark-messages-read`, `update-insurance`, `request-refill`
+- Staff: `start-appointment`, `complete-appointment`, `no-show-appointment`, `send-message`, `mark-messages-read`, `approve-refill`, `decline-refill`
+
+The appointment lifecycle is `none → scheduled → confirmed → checked-in → in-progress → completed`, with `cancelled` reachable by the patient from `scheduled` or `confirmed` and `no-show` reachable by staff from the same two statuses. Two rules are deliberate: rescheduling returns a confirmed appointment to `scheduled`, so it must be confirmed again; and `check-in-appointment` belongs to the **patient** and requires `confirmed`, mirroring how real portals work.
 
 Example:
 
@@ -421,7 +428,7 @@ Example:
 }
 ```
 
-`submit-intake` requires `reasonForVisit`, `currentSymptoms`, `medicationChanges`, and `allergies`. `send-message` requires a non-empty `messageBody` of at most 500 characters. `update-insurance` requires provider, plan, and member ID. Lab results and visit summaries are deterministic UI content; the CSV export is generated client-side and does not call the API. The response returns the complete persisted state. Invalid payloads return HTTP 400, invalid role/action combinations return HTTP 403, and invalid workflow transitions return HTTP 409.
+`submit-intake` requires `reasonForVisit`, `currentSymptoms`, `medicationChanges`, and `allergies`, and additionally requires an appointment in `scheduled`, `confirmed`, or `checked-in`; otherwise it returns HTTP `409`. `book-appointment` and `reschedule-appointment` accept optional `provider` and `specialty` fields. `send-message` requires a non-empty `messageBody` of at most 500 characters. `update-insurance` requires provider, plan, and member ID. Lab results and visit summaries are deterministic UI content; the CSV export is generated client-side and does not call the API. The response returns the complete persisted state. Invalid payloads return HTTP 400, invalid role/action combinations return HTTP 403, and invalid workflow transitions return HTTP 409.
 
 ### `DELETE /api/demo-state`
 
@@ -570,6 +577,57 @@ If the Worker URL changes, update all three locations:
 
 Do not cache authentication API rewrites at the CDN.
 
+### Testing a branch online before merging
+
+A Vercel preview of a branch **will not work** on its own, and the reason is worth understanding
+before you try it. `vercel.json` hardcodes the rewrite destination:
+
+```json
+"destination": "https://luma-health-demo.thiago-nunes-5e0.workers.dev/api/:path*"
+```
+
+and the Worker deploys only from `main`. So a preview pairs the branch's **frontend** with
+production's **API**. Any branch that adds an action, a `DemoState` field, or changes an actor
+returns `400` or `403` for the new paths, and you cannot tell a real defect from a stale API.
+Worse, the D1 demo state is a single global row, so anything a preview did write would mutate
+production.
+
+**Use the staging Worker instead.** The Worker is not just the API — `dist/server/wrangler.json`
+carries both `main` and `assets: ../client`, so it serves the frontend too. That makes a staging
+Worker a complete, same-origin preview of the branch: matched frontend and API, its own database,
+and the session cookie behaves exactly as it does in production. It is a better preview than Vercel
+can give you, not a worse one.
+
+Run **Actions → Deploy staging Worker → Run workflow**, pick the branch, and type `staging` to
+confirm. It runs the same gate as production — lint, unit tests, the browser suite — then publishes
+to `luma-health-demo-staging`. It refuses to run on `main`, and refuses to deploy at all if the
+staging database id is unset, because falling back to the default id would write to production.
+
+One-time setup:
+
+```bash
+# 1. A database of its own. Never point staging at the production id.
+wrangler d1 create luma-health-demo-staging-db
+
+# 2. Save the returned database_id as the repository variable
+#    STAGING_D1_DATABASE_ID (Settings → Secrets and variables → Actions → Variables).
+
+# 3. Secrets for the staging Worker.
+wrangler secret put MFA_SESSION_SECRET --name luma-health-demo-staging
+wrangler secret put BREVO_API_KEY --name luma-health-demo-staging
+```
+
+The build reads `D1_DATABASE_NAME` and `D1_DATABASE_ID` (`vite.config.ts`) and falls back to the
+production pair when they are unset, so a normal `npm run build` is unchanged. The workflow asserts
+the resolved binding matches the staging id before deploying.
+
+**If you also want the Vercel preview to work**, the rewrite destination has to stop being a
+literal. The approach is a Vercel Edge Middleware at the repo root that rewrites `/api/*` to
+`process.env.API_ORIGIN`, with `API_ORIGIN` set per environment in the Vercel project (Production →
+the production Worker, Preview → the staging Worker). That keeps the API same-origin, which is what
+makes the HTTP-only session cookie work. It is not implemented here: it cannot be verified locally,
+only on a real preview deployment, and the staging Worker already covers the need.
+
 ### Manual Cloudflare fallback
 
 Use manual deployment only for recovery or when GitHub Actions is unavailable.
@@ -621,7 +679,9 @@ For deterministic setup, negative-path expectations, cross-role sequencing, and 
 - The code expires after ten minutes.
 - Successful verification creates a session.
 - Appointment, intake, and refill actions update the UI.
-- Patients can book, reschedule, and cancel while the appointment is still scheduled.
+- Patients can book, reschedule, and cancel while the appointment is still scheduled or confirmed.
+- Patients confirm attendance from the portal, then check themselves in. Check-in before confirming returns HTTP `409`.
+- Pre-visit questions are refused with HTTP `409` when there is no appointment in `scheduled`, `confirmed`, or `checked-in`.
 - Reloading restores the persisted global state.
 - The employee dashboard displays the patient's new appointment and submitted intake.
 - Staff can open deterministic appointment details and intake-review dialogs.
@@ -645,7 +705,8 @@ For deterministic setup, negative-path expectations, cross-role sequencing, and 
 - MFA is delivered to the employee demo email.
 - Employee access opens the clinic dashboard.
 - Patient search returns predictable profiles and a deterministic empty state.
-- Staff can move the portal appointment through scheduled, checked-in, in-progress, and completed states.
+- Staff can start and complete a visit the patient has already checked into, and can record a no-show while the appointment is still awaiting arrival.
+- Staff cannot check a patient in; that action returns HTTP `403` for the employee role.
 - Staff can observe, approve, or decline a pending refill in the shared state.
 - Staff metrics, schedule, and request counts reflect the patient's persisted appointment and intake actions.
 
@@ -682,15 +743,54 @@ Before any production healthcare use, replace the authentication model with a ve
 
 If the demo needs isolated sessions, add an environment or tenant identifier and key `demo_state` by that identifier.
 
+### Design system and accessibility
+
+The UI was rebuilt in 2026 against a Dieter Rams audit (`DESIGN-IS-2026-08-19/`, which scored the
+previous version 8/30). What that pass established, and what must not regress:
+
+- **`app/globals.css` has a token layer.** Every colour, font size, and spacing value lives in the
+  `:root` block. A hex literal outside that block is a defect: `sed '1,<root-end>d' app/globals.css
+  | grep -oE '#[0-9a-fA-F]{3,8}'` must return nothing. The previous version had 101.
+- **The type scale has 8 steps with a 12px floor.** Nothing renders smaller. The previous version
+  had 24 distinct sizes, 65% of them at or below 12px, including an 8px mobile navigation label.
+- **`--muted` must clear 4.5:1 on `--surface`, `--canvas`, and `--surface-sunken`.** It is the
+  app's secondary-text colour and one wrong value there caused 39 of the audit's 59 contrast
+  failures.
+- **All interactive elements get a visible focus ring**, including the two label-wrapped radio
+  groups whose real inputs are `opacity: 0` (`.time-options`, `.account-role-picker`). Those need
+  `:has(input:focus-visible)` rules; without them keyboard focus is invisible, not merely faint.
+- **Every dialog goes through `shared/Modal.tsx`**, which owns the focus trap, initial focus, focus
+  restore, and Escape-to-close. Do not hand-roll a `.modal-backdrop`. Backdrop dismissal is opt-in
+  via `dismissOnBackdrop` and is only correct for read-only dialogs — enabling it on a form dialog
+  silently destroys typed input.
+- **Every value on screen must trace to a `DemoState` field.** If it cannot, delete it rather than
+  restyling it. The previous version shipped a hardcoded progress ring, fabricated staff metrics,
+  a decorative unread dot with no data behind it, and a message badge that counted the reader's own
+  sent messages.
+- **Touch targets are 44×44 minimum**, with a `@media (pointer: coarse)` block for the text buttons.
+
+Automated enforcement: `npm run lint` runs the full `eslint-plugin-jsx-a11y` recommended set
+(34 rules, up from the 6 that `eslint-config-next` enables), and `npm run test:e2e` runs axe-core
+against six surfaces — sign-in, patient home, health record, a lab dialog, staff today, and staff
+requests — gated on the rule list in `tests/e2e/full_demo.py`. The Swagger console is excluded from
+that audit because it is vendor DOM; `swagger-ui-react` has its own violations (`button-name`,
+`select-name`, `color-contrast`) that are not ours to fix.
+
+**Not done, deliberately:** there is no dark mode. `prefers-color-scheme` appears nowhere. The
+token layer makes it reachable — it was not reachable before, with 101 hex values hardcoded per
+rule — but implementing it was left out of the redesign. Likewise `prefers-contrast` and
+`forced-colors` are unsupported.
+
 ### UI scope
 
-- Dates, clinicians, patients, metrics, clinical documents, and activity entries are deterministic fictional content by design.
+- Dates, clinicians, patients, clinical documents, and directory entries are deterministic fictional content by design. Staff metrics are counted from the shared state, not fabricated.
 - Appointment, intake, insurance, messaging, refill, patient-search, lab-result, and visit-summary flows are implemented for QA automation, but do not integrate with real clinical systems.
+- A patient signed in with a personal account sees the shared demo patient's clinical record, and is told so by a notice on Home and Health record. The record itself is Maria Lopez's; personal accounts have no clinical data of their own.
 - Native iOS and Android applications are explicitly out of scope; responsive mobile web is the accepted mobile test surface.
 
 ### Test suite
 
-`npm test` runs deterministic unit coverage for demo actions, role restrictions, workflow transitions, MFA policies, and OpenAPI route coverage. `npm run test:e2e` validates the interactive `/api-docs` console and then runs the serial cross-role browser journey. The GitHub Actions production workflow runs both suites as release gates before either build and the Worker deploy.
+`npm test` runs deterministic unit coverage for demo actions, role restrictions, workflow transitions, MFA policies, and OpenAPI route coverage — including three tests that compare `public/openapi.json` against `lib/demo-state.ts`, so the contract can no longer drift from the TypeScript source in silence. `npm run test:e2e` validates the interactive `/api-docs` console, runs axe-core against six application surfaces, and then runs the serial cross-role browser journey. The GitHub Actions production workflow runs both suites as release gates before either build and the Worker deploy.
 
 Remaining recommended coverage:
 
@@ -698,7 +798,8 @@ Remaining recommended coverage:
 - Unit tests for session signing and expiration.
 - Route-level API tests for login throttling and concurrent MFA replay prevention.
 - API tests proving that reset deletes demo state but preserves users.
-- Browser tests for personal patient/employee registration flows, using an injected email-delivery provider so no real message is sent.
+- Browser tests for personal patient/employee registration flows, using an injected email-delivery provider so no real message is sent. This gap also means the shared-record notice — which only renders for a personal account — is verified by code inspection rather than by the deploy gate.
+- Component tests for `shared/LumaApp.tsx`. The browser suite is currently the only safety net for UI work.
 
 ### Build structure
 

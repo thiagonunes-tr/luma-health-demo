@@ -40,10 +40,13 @@ After reset, the state is:
   "appointmentBooked": false,
   "appointmentStatus": "none",
   "appointmentTime": "10:30",
+  "appointmentProvider": null,
+  "appointmentSpecialty": null,
   "intakeComplete": false,
   "intakeSubmission": null,
   "refillStatus": "none",
   "messages": ["Two deterministic starter messages"],
+  "lastRead": { "patient": null, "staff": null },
   "insurance": {
     "provider": "HealthFirst Demo",
     "planName": "Silver Care",
@@ -79,17 +82,20 @@ the versioned [`public/openapi.json`](../public/openapi.json) file.
 | `DELETE /api/auth/account` | Personal account | Requires current password and exact `DELETE`; fixed demos return `403` |
 | `GET /api/demo-state` | Any authenticated role | Returns the current shared state |
 | `PATCH /api/demo-state` with `book-appointment` | Patient | Sets the selected time and changes status to `scheduled` |
-| `PATCH /api/demo-state` with `reschedule-appointment` | Patient | Changes the selected time while status is `scheduled` |
-| `PATCH /api/demo-state` with `cancel-appointment` | Patient | Changes `scheduled` to `cancelled` |
-| `PATCH /api/demo-state` with `submit-intake` | Patient | Validates and stores all four intake fields |
+| `PATCH /api/demo-state` with `confirm-appointment` | Patient | Changes `scheduled` to `confirmed` |
+| `PATCH /api/demo-state` with `reschedule-appointment` | Patient | Changes the selected time while status is `scheduled` or `confirmed`, and returns it to `scheduled` |
+| `PATCH /api/demo-state` with `cancel-appointment` | Patient | Changes `scheduled` or `confirmed` to `cancelled` |
+| `PATCH /api/demo-state` with `check-in-appointment` | **Patient** | Changes `confirmed` to `checked-in`. Returns `409` from any other status |
+| `PATCH /api/demo-state` with `submit-intake` | Patient | Validates and stores all four intake fields. Returns `409` unless an appointment is `scheduled`, `confirmed`, or `checked-in` |
 | `PATCH /api/demo-state` with `send-message` | Patient or employee | Appends a message and derives the sender from the session |
 | `PATCH /api/demo-state` with `update-insurance` | Patient | Validates and persists provider, plan, and member ID |
 | `PATCH /api/demo-state` with `request-refill` | Patient | Changes refill status from `none` or `rejected` to `pending` |
 | `PATCH /api/demo-state` with `approve-refill` | Employee | Changes refill status from `pending` to `approved` |
 | `PATCH /api/demo-state` with `decline-refill` | Employee | Changes refill status from `pending` to `rejected` |
-| `PATCH /api/demo-state` with `check-in-appointment` | Employee | Changes `scheduled` to `checked-in` |
 | `PATCH /api/demo-state` with `start-appointment` | Employee | Changes `checked-in` to `in-progress` |
 | `PATCH /api/demo-state` with `complete-appointment` | Employee | Changes `in-progress` to `completed` |
+| `PATCH /api/demo-state` with `no-show-appointment` | Employee | Changes `scheduled` or `confirmed` to `no-show` |
+| `PATCH /api/demo-state` with `mark-messages-read` | Patient or employee | Records the last read message for the calling role only |
 | `DELETE /api/demo-state` | Fixed demo accounts | Restores the default state |
 
 Example action:
@@ -118,18 +124,23 @@ Tests should assert these responses when covering negative paths. The client wai
 
 1. Sign in as the patient using the demo MFA bypass.
 2. Reset the demo state.
-3. Complete all intake fields, update insurance, send a care-team message, book an appointment, reschedule it, and request a refill.
-4. Sign out.
-5. Sign in as the employee using the demo MFA bypass.
-6. Search for Maria Lopez and verify that her profile reflects the shared appointment, intake, insurance, and refill state.
-7. Verify that the appointment appears at the selected time, then check in the patient, start the visit, and complete it.
-8. Verify that Maria Lopez's submitted intake appears in Requests and assert the entered answers.
-9. Open Messages, assert the patient's text, and send a staff reply.
-10. Open the visit summary and assert that downloading it produces `maria-lopez-visit-summary.csv`.
-11. Verify the pending refill and approve or decline it.
-12. Sign out and sign in again as the patient.
-13. Open Results, verify the CBC values and visit summary, then verify the staff reply, completed visit, and final refill status.
-14. If the refill was declined, submit a new request and confirm it returns to `pending`.
+3. Assert the negative paths that depend on an empty state: `approve-refill` as the patient returns `403`, `complete-intake` with no appointment returns `409`, and `check-in-appointment` before confirming returns `409`.
+4. Book an appointment, reschedule it, then **confirm attendance**. Rescheduling clears any earlier confirmation, so confirm after the final time is set.
+5. Complete all intake fields, update insurance, send a care-team message, and request a refill.
+6. Open Results, verify the CBC values, and download the visit summary as `maria-lopez-visit-summary.csv`.
+7. **Check in** as the patient. This is the patient's own step; the employee portal cannot perform it.
+8. Sign out.
+9. Sign in as the employee using the demo MFA bypass.
+10. Search for Maria Lopez and verify that her profile reflects the shared appointment, intake, insurance, and refill state, and that the appointment reads as checked in at the selected time.
+11. Verify that Maria Lopez's submitted intake appears in Requests and assert the entered answers.
+12. Open Messages, assert the patient's text, and send a staff reply.
+13. Verify the pending refill and approve or decline it.
+14. Start the visit and complete it. Alternatively, from a `scheduled` or `confirmed` appointment, record a no-show instead.
+15. Assert that `start-appointment` on a completed visit returns `409`.
+16. Sign out and sign in again as the patient.
+17. Verify the staff reply, the completed visit, and the final refill status.
+18. If the refill was declined, submit a new request and confirm it returns to `pending`.
+19. Reset the demo state and assert that the appointment, provider, specialty, intake, refill, insurance, and read markers all return to their defaults.
 
 Use accessible names and visible labels when locating UI controls. Wait for the confirmation toast or resulting UI state instead of using fixed timeouts. Do not continue to the next role until the action request has completed.
 

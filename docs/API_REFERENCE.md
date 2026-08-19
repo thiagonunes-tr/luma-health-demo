@@ -266,6 +266,8 @@ The state is global and shared by every session:
   "appointmentBooked": false,
   "appointmentStatus": "none",
   "appointmentTime": "10:30",
+  "appointmentProvider": null,
+  "appointmentSpecialty": null,
   "intakeComplete": false,
   "intakeSubmission": null,
   "refillStatus": "none",
@@ -283,6 +285,7 @@ The state is global and shared by every session:
       "sentAt": "Jul 24 · 9:18 AM"
     }
   ],
+  "lastRead": { "patient": null, "staff": null },
   "insurance": {
     "provider": "HealthFirst Demo",
     "planName": "Silver Care",
@@ -306,6 +309,8 @@ Requires a valid session and returns:
     "appointmentBooked": false,
     "appointmentStatus": "none",
     "appointmentTime": "10:30",
+    "appointmentProvider": null,
+    "appointmentSpecialty": null,
     "intakeComplete": false,
     "intakeSubmission": null,
     "refillStatus": "none",
@@ -323,6 +328,7 @@ Requires a valid session and returns:
         "sentAt": "Jul 24 · 9:18 AM"
       }
     ],
+    "lastRead": { "patient": null, "staff": null },
     "insurance": {
       "provider": "HealthFirst Demo",
       "planName": "Silver Care",
@@ -343,12 +349,15 @@ Patient actions:
 
 | Action | Result |
 | --- | --- |
-| `book-appointment` | Creates a scheduled appointment at the supplied `appointmentTime` |
-| `reschedule-appointment` | Changes the time of a scheduled appointment |
-| `cancel-appointment` | Cancels a scheduled appointment |
-| `submit-intake` | Validates and persists the four-field intake submission |
-| `complete-intake` | Legacy-compatible action that saves the deterministic default intake |
+| `book-appointment` | Creates a scheduled appointment at the supplied `appointmentTime`, and records the optional `provider` and `specialty` |
+| `confirm-appointment` | Changes `scheduled` to `confirmed` |
+| `reschedule-appointment` | Changes the time of a scheduled or confirmed appointment, and returns it to `scheduled` so it must be confirmed again |
+| `cancel-appointment` | Cancels a scheduled or confirmed appointment and clears the provider and specialty |
+| `check-in-appointment` | Changes `confirmed` to `checked-in`. The patient checks themselves in |
+| `submit-intake` | Validates and persists the four-field intake submission. Requires an appointment that is `scheduled`, `confirmed`, or `checked-in` |
+| `complete-intake` | Legacy-compatible action that saves the deterministic default intake. Subject to the same appointment precondition |
 | `send-message` | Appends a patient message to the shared conversation |
+| `mark-messages-read` | Records the last message the patient has read, which drives the unread badge |
 | `update-insurance` | Validates and persists the patient's coverage fields |
 | `request-refill` | Changes `none` or `rejected` to `pending` |
 
@@ -409,10 +418,11 @@ Employee actions:
 
 | Action | Result |
 | --- | --- |
-| `check-in-appointment` | Changes `scheduled` to `checked-in` |
 | `start-appointment` | Changes `checked-in` to `in-progress` |
 | `complete-appointment` | Changes `in-progress` to `completed` |
+| `no-show-appointment` | Changes `scheduled` or `confirmed` to `no-show` |
 | `send-message` | Appends a staff reply to the shared conversation |
+| `mark-messages-read` | Records the last message the employee has read |
 | `approve-refill` | Changes `pending` to `approved` |
 | `decline-refill` | Changes `pending` to `rejected` |
 
@@ -432,10 +442,13 @@ Successful response:
     "appointmentBooked": false,
     "appointmentStatus": "none",
     "appointmentTime": "10:30",
+    "appointmentProvider": null,
+    "appointmentSpecialty": null,
     "intakeComplete": false,
     "intakeSubmission": null,
     "refillStatus": "pending",
     "messages": ["Default two-message thread omitted for brevity"],
+    "lastRead": { "patient": null, "staff": null },
     "insurance": {
       "provider": "HealthFirst Demo",
       "planName": "Silver Care",
@@ -454,7 +467,7 @@ Successful response:
 | `403` | Action is not allowed for the current role |
 | `409` | Transition is incompatible with the current state |
 
-Invalid intake, insurance, or message payloads return HTTP `400`. Examples of conflicts include advancing an appointment out of sequence, changing an appointment after check-in, requesting an already pending or approved refill, and attempting to approve or decline a refill that is not pending.
+Invalid intake, insurance, or message payloads return HTTP `400`. Examples of conflicts include advancing an appointment out of sequence, checking in before the appointment is confirmed, confirming an appointment that is not `scheduled`, marking a no-show for a patient who already arrived, changing an appointment after check-in, submitting pre-visit questions with no active appointment, requesting an already pending or approved refill, and attempting to approve or decline a refill that is not pending.
 
 ### `DELETE /api/demo-state`
 
@@ -466,10 +479,13 @@ Restores the default state without removing registered users:
     "appointmentBooked": false,
     "appointmentStatus": "none",
     "appointmentTime": "10:30",
+    "appointmentProvider": null,
+    "appointmentSpecialty": null,
     "intakeComplete": false,
     "intakeSubmission": null,
     "refillStatus": "none",
     "messages": ["The deterministic two-message thread is restored"],
+    "lastRead": { "patient": null, "staff": null },
     "insurance": {
       "provider": "HealthFirst Demo",
       "planName": "Silver Care",

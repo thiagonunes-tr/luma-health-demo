@@ -97,7 +97,9 @@ Desktop web and mobile web are covered. The employee workflow is covered through
 | Review appointment queue | The clinic dashboard displays schedule metrics and a list of appointments with statuses. A patient booking appears at its selected time with a details dialog. | **Implemented** | `StaffDashboard` derives the schedule entry, time, lifecycle status, and metric from the shared appointment state. |
 | Review intake form | A form completed by the patient appears in the employee request queue and shows the actual submitted answers. | **Implemented** | `StaffDashboard` derives the request, counts, and review dialog from `intakeSubmission`. |
 | Approve/reject refill request | Staff can approve or decline a pending refill and the resulting state is visible to the patient. | **Implemented** | `approve-refill` and `decline-refill` are staff-only API actions. |
-| Update visit status | Staff can check in the patient, start the visit, and complete it in sequence. The patient sees the resulting status. | **Implemented** | Role-authorized actions enforce `scheduled` → `checked-in` → `in-progress` → `completed`. |
+| Update visit status | The patient confirms attendance and checks themselves in; staff then starts and completes the visit, or records a no-show. Each role sees the resulting status. | **Implemented** | Role-authorized actions enforce `scheduled` → `confirmed` → `checked-in` → `in-progress` → `completed`, with `no-show` reachable by staff from `scheduled` or `confirmed`. |
+| Patient self check-in | The patient confirms attendance and checks in without staff involvement. | **Implemented** | `confirm-appointment` and `check-in-appointment` are patient-only actions; check-in returns `409` unless the appointment is `confirmed`. |
+| Record a missed appointment | Staff can record that a patient did not attend, and the patient can then book again. | **Implemented** | `no-show-appointment` is staff-only and rejects an appointment that already reached `checked-in`. |
 | Export visit summary | Patient and staff can download a deterministic CSV summary. | **Implemented** | The browser generates `maria-lopez-visit-summary.csv` with stable QA assertions. |
 
 ## 8. Authentication and MFA comparison
@@ -179,8 +181,8 @@ Tests can establish an immediate known starting state through the protected rese
 | Use local or mock APIs instead of unstable external business APIs | Business state and authentication use first-party API routes on the Worker. | **Implemented** |
 | Avoid dependence on outside services | Core UI and state are controlled by the project; email MFA depends on Brevo. | **Partial** |
 | Use only useful demo errors | Invalid credentials, role mismatch, invalid/expired MFA, duplicate account, and rate-limit errors are represented. | **Implemented** |
-| Keep the UI clean, stable, consistent, and believable | Patient and clinic dashboards use consistent reusable components and responsive styling. | **Implemented** |
-| Everything must be fake and safe for a public demo | Clinical and business content is fake. User-provided emails and password hashes are real account data. | **Partial / risk** |
+| Keep the UI clean, stable, consistent, and believable | Rebuilt in 2026 against a Rams audit: one token layer, one shared dialog component, one navigation source of truth, and an explicit router in which every destination has its own branch. | **Implemented** | See `DESIGN-IS-2026-08-19/` and `docs/DEVELOPER_HANDOFF.md` §12. |
+| Everything must be fake and safe for a public demo | Clinical and business content is fake, and now says so where it leaves the labelled environment: the exported CSV carries its own notice, the MFA email identifies itself as a demonstration, and a personal account is told the clinical record it sees belongs to the shared demo patient. User-provided emails and password hashes remain real account data. | **Partial / risk** | The residual risk is account data, not clinical content. |
 
 ## 11. Later approved decisions
 
