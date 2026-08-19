@@ -1,0 +1,117 @@
+name: Deploy staging Worker
+
+# Manual only. Publishes a second Worker from any branch so a Vercel preview has
+# an API that matches the branch's frontend. Production is never touched: a
+# different Worker name and a different D1 database.
+#
+# One-time setup, documented in docs/DEVELOPER_HANDOFF.md §10:
+#   1. wrangler d1 create luma-health-demo-staging-db
+#   2. Save the returned id as the STAGING_D1_DATABASE_ID repository variable.
+#   3. Set MFA_SESSION_SECRET and BREVO_API_KEY on the staging Worker.
+#   4. Point the Vercel Preview environment's API_ORIGIN at the staging Worker.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "staging" to confirm this is not production'
+        required: true
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging
+  cancel-in-progress: true
+
+jobs:
+  deploy-staging:
+    name: Validate and deploy the staging Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.ref != 'refs/heads/main'
+
+    steps:
+      - name: Refuse unless explicitly confirmed
+        run: |
+          if [ "${{ inputs.confirm }}" != "staging" ]; then
+            echo "::error::Type 'staging' in the confirm input to run this workflow."
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The same gate as production. A staging deploy that skips the gate would
+      # tell you nothing about whether the branch is safe to merge.
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Configure Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-e2e.txt
+
+      - name: Install browser test dependencies
+        run: |
+          python -m pip install --requirement requirements-e2e.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Run deterministic browser tests
+        env:
+          E2E_MFA_SESSION_SECRET: github-actions-e2e-only-secret-2026
+        run: python tests/e2e/full_demo.py
+
+      - name: Upload browser test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-e2e-failure-artifacts
+          path: test-results/e2e
+          if-no-files-found: ignore
+
+      - name: Fail if the staging database is not configured
+        run: |
+          if [ -z "${{ vars.STAGING_D1_DATABASE_ID }}" ]; then
+            echo "::error::STAGING_D1_DATABASE_ID is unset. Without it the build"
+            echo "::error::would fall back to the production database id and this"
+            echo "::error::deploy would write to production demo state."
+            exit 1
+          fi
+
+      - name: Build against the staging database
+        env:
+          D1_DATABASE_NAME: luma-health-demo-staging-db
+          D1_DATABASE_ID: ${{ vars.STAGING_D1_DATABASE_ID }}
+        run: npm run build
+
+      - name: Confirm the build is bound to staging, not production
+        run: |
+          BOUND=$(node -e "console.log(require('./dist/server/wrangler.json').d1_databases[0].database_id)")
+          if [ "$BOUND" != "${{ vars.STAGING_D1_DATABASE_ID }}" ]; then
+            echo "::error::Build is bound to $BOUND, not the staging database."
+            exit 1
+          fi
+          echo "Bound to staging database $BOUND"
+
+      - name: Deploy the staging Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --name luma-health-demo-staging

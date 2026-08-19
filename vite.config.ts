@@ -6,6 +6,12 @@ import { sites } from "./build/sites-vite-plugin";
 const PRODUCTION_DATABASE_NAME = "luma-health-demo-db";
 const PRODUCTION_DATABASE_ID = "48796066-30ae-4bd0-9dd3-e3d361fea02c";
 
+// A staging deploy must not share production's D1 row: the demo state is a
+// single global row, so one shared database means a preview mutates production.
+// Set both variables together; see docs/DEVELOPER_HANDOFF.md §10.
+const DATABASE_NAME = process.env.D1_DATABASE_NAME ?? PRODUCTION_DATABASE_NAME;
+const DATABASE_ID = process.env.D1_DATABASE_ID ?? PRODUCTION_DATABASE_ID;
+
 const { d1, r2 } = hostingConfig;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
@@ -18,8 +24,8 @@ const localBindingConfig = {
     ? [
         {
           binding: d1,
-          database_name: PRODUCTION_DATABASE_NAME,
-          database_id: PRODUCTION_DATABASE_ID,
+          database_name: DATABASE_NAME,
+          database_id: DATABASE_ID,
         },
       ]
     : [],

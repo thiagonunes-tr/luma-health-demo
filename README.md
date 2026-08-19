@@ -22,6 +22,12 @@ A push or merge to `main` publishes both production targets from the same commit
 
 The workflow is defined in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). It can also be started manually from the repository's **Actions** tab.
 
+To review a branch online before merging, run **Deploy staging Worker**
+([`.github/workflows/deploy-staging.yml`](.github/workflows/deploy-staging.yml)). It publishes a
+second Worker with its own D1 database, serving both the frontend and the API from one origin — a
+matched preview of the branch. A Vercel preview alone pairs the branch's frontend with production's
+API and will fail; see [Developer Handoff](docs/DEVELOPER_HANDOFF.md) §10.
+
 Required GitHub Actions secrets:
 
 - `CLOUDFLARE_API_TOKEN`
