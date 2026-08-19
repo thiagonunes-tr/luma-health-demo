@@ -1,17 +1,25 @@
 import { env } from "cloudflare:workers";
 import {
+  type AppointmentStatus,
+  type AppointmentTime,
+  BOOKED_APPOINTMENT_STATUSES,
   DEFAULT_DEMO_STATE,
   DEFAULT_INSURANCE,
   DEFAULT_INTAKE_SUBMISSION,
+  DEFAULT_LAST_READ,
   DEFAULT_MESSAGES,
   DemoActorRole,
   DemoActionInput,
   DemoState,
   DemoStateAction,
   DemoTransitionResult,
+  MessageReadState,
+  isAppointmentProvider,
+  isAppointmentSpecialty,
   isDemoMessage,
   isInsuranceInfo,
   isIntakeSubmission,
+  isMessageReadState,
   transitionDemoState,
 } from "./demo-state";
 
@@ -21,9 +29,12 @@ export {
   type DemoStateAction,
   type AppointmentStatus,
   type AppointmentTime,
+  type AppointmentProvider,
+  type AppointmentSpecialty,
   type DemoMessage,
   type IntakeSubmission,
   type InsuranceInfo,
+  type MessageReadState,
 } from "./demo-state";
 
 let initialized = false;
@@ -199,14 +210,19 @@ export async function getDemoState(): Promise<DemoState> {
   if (!record) return DEFAULT_DEMO_STATE;
 
   try {
-    const state = JSON.parse(record.state_json) as Partial<DemoState>;
+    // Rows written before appointmentBooked/intakeComplete were dropped can
+    // still be in D1, so keep reading them as a migration path only.
+    type LegacyDemoState = { appointmentBooked?: boolean; intakeComplete?: boolean };
+    const state = JSON.parse(record.state_json) as Partial<DemoState> & LegacyDemoState;
     const appointmentStatus: AppointmentStatus = [
       "none",
       "scheduled",
+      "confirmed",
       "checked-in",
       "in-progress",
       "completed",
       "cancelled",
+      "no-show",
     ].includes(String(state.appointmentStatus))
       ? state.appointmentStatus as AppointmentStatus
       : state.appointmentBooked
@@ -217,6 +233,14 @@ export async function getDemoState(): Promise<DemoState> {
     )
       ? state.appointmentTime as AppointmentTime
       : "10:30";
+    const appointmentProvider = isAppointmentProvider(state.appointmentProvider)
+      ? state.appointmentProvider
+      : null;
+    const appointmentSpecialty = isAppointmentSpecialty(
+      state.appointmentSpecialty,
+    )
+      ? state.appointmentSpecialty
+      : null;
     const intakeSubmission = isIntakeSubmission(state.intakeSubmission)
       ? state.intakeSubmission
       : state.intakeComplete
@@ -229,12 +253,27 @@ export async function getDemoState(): Promise<DemoState> {
     const insurance = isInsuranceInfo(state.insurance)
       ? state.insurance
       : DEFAULT_INSURANCE;
+    // Drop read markers that no longer point at a surviving message.
+    const messageIds = new Set(messages.map((message) => message.id));
+    const storedLastRead = isMessageReadState(state.lastRead)
+      ? state.lastRead
+      : DEFAULT_LAST_READ;
+    const lastRead: MessageReadState = {
+      patient:
+        storedLastRead.patient && messageIds.has(storedLastRead.patient)
+          ? storedLastRead.patient
+          : null,
+      staff:
+        storedLastRead.staff && messageIds.has(storedLastRead.staff)
+          ? storedLastRead.staff
+          : null,
+    };
     return {
-      appointmentBooked: ["scheduled", "checked-in", "in-progress"].includes(
-        appointmentStatus,
-      ),
+      appointmentBooked: BOOKED_APPOINTMENT_STATUSES.includes(appointmentStatus),
       appointmentStatus,
       appointmentTime,
+      appointmentProvider,
+      appointmentSpecialty,
       intakeComplete: intakeSubmission !== null,
       intakeSubmission,
       refillStatus: ["none", "pending", "approved", "rejected"].includes(
@@ -243,6 +282,7 @@ export async function getDemoState(): Promise<DemoState> {
         ? state.refillStatus
         : "none",
       messages,
+      lastRead,
       insurance,
     };
   } catch {
@@ -290,5 +330,10 @@ export async function resetDemoState(): Promise<DemoState> {
       )
       .bind(now),
   ]);
-  return { ...DEFAULT_DEMO_STATE, messages: [...DEFAULT_MESSAGES] };
+  // Clone every mutable field so resets never share the module-level defaults.
+  return {
+    ...DEFAULT_DEMO_STATE,
+    messages: [...DEFAULT_MESSAGES],
+    lastRead: { ...DEFAULT_LAST_READ },
+  };
 }

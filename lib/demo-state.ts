@@ -3,11 +3,33 @@ export type RefillStatus = "none" | "pending" | "approved" | "rejected";
 export type AppointmentStatus =
   | "none"
   | "scheduled"
+  | "confirmed"
   | "checked-in"
   | "in-progress"
   | "completed"
-  | "cancelled";
+  | "cancelled"
+  | "no-show";
 export type AppointmentTime = "09:00" | "10:30" | "15:00";
+export type AppointmentProvider = "Dr. Ana Costa" | "Dr. John Lima";
+export type AppointmentSpecialty =
+  | "Primary Care"
+  | "Cardiology"
+  | "Dermatology";
+
+/** Statuses in which a visit is still ahead of the patient. */
+export const ACTIVE_APPOINTMENT_STATUSES: AppointmentStatus[] = [
+  "scheduled",
+  "confirmed",
+  "checked-in",
+];
+
+/** Statuses that keep `appointmentBooked` true. */
+export const BOOKED_APPOINTMENT_STATUSES: AppointmentStatus[] = [
+  "scheduled",
+  "confirmed",
+  "checked-in",
+  "in-progress",
+];
 export type IntakeReason =
   | "Routine follow-up"
   | "New symptoms"
@@ -32,27 +54,34 @@ export type InsuranceInfo = {
   updatedAt: string;
 };
 
+/** Last message id each role has read, used to derive an unread count. */
+export type MessageReadState = { patient: string | null; staff: string | null };
+
 export type DemoState = {
-  appointmentBooked: boolean;
   appointmentStatus: AppointmentStatus;
   appointmentTime: AppointmentTime;
-  intakeComplete: boolean;
+  appointmentProvider: AppointmentProvider | null;
+  appointmentSpecialty: AppointmentSpecialty | null;
   intakeSubmission: IntakeSubmission | null;
   refillStatus: RefillStatus;
   messages: DemoMessage[];
+  lastRead: MessageReadState;
   insurance: InsuranceInfo;
 };
 
 export type DemoStateAction =
   | "book-appointment"
+  | "confirm-appointment"
   | "reschedule-appointment"
   | "cancel-appointment"
   | "check-in-appointment"
+  | "no-show-appointment"
   | "start-appointment"
   | "complete-appointment"
   | "complete-intake"
   | "submit-intake"
   | "send-message"
+  | "mark-messages-read"
   | "update-insurance"
   | "request-refill"
   | "approve-refill"
@@ -60,6 +89,8 @@ export type DemoStateAction =
 
 export type DemoActionInput = {
   appointmentTime?: unknown;
+  provider?: unknown;
+  specialty?: unknown;
   intake?: unknown;
   messageBody?: unknown;
   insurance?: unknown;
@@ -68,6 +99,9 @@ export type DemoActionInput = {
 export type DemoTransitionResult =
   | { ok: true; state: DemoState }
   | { ok: false; status: 400 | 403 | 409; error: string };
+
+export const INTAKE_REQUIRES_APPOINTMENT =
+  "Book an appointment before completing your pre-visit questions.";
 
 export const DEFAULT_INTAKE_SUBMISSION: IntakeSubmission = {
   reasonForVisit: "Routine follow-up",
@@ -99,27 +133,36 @@ export const DEFAULT_INSURANCE: InsuranceInfo = {
   updatedAt: "Initial demo record",
 };
 
+export const DEFAULT_LAST_READ: MessageReadState = {
+  patient: null,
+  staff: null,
+};
+
 export const DEFAULT_DEMO_STATE: DemoState = {
-  appointmentBooked: false,
   appointmentStatus: "none",
   appointmentTime: "10:30",
-  intakeComplete: false,
+  appointmentProvider: null,
+  appointmentSpecialty: null,
   intakeSubmission: null,
   refillStatus: "none",
   messages: DEFAULT_MESSAGES,
+  lastRead: DEFAULT_LAST_READ,
   insurance: DEFAULT_INSURANCE,
 };
 
-const actions: DemoStateAction[] = [
+export const DEMO_STATE_ACTIONS: DemoStateAction[] = [
   "book-appointment",
+  "confirm-appointment",
   "reschedule-appointment",
   "cancel-appointment",
   "check-in-appointment",
+  "no-show-appointment",
   "start-appointment",
   "complete-appointment",
   "complete-intake",
   "submit-intake",
   "send-message",
+  "mark-messages-read",
   "update-insurance",
   "request-refill",
   "approve-refill",
@@ -127,11 +170,53 @@ const actions: DemoStateAction[] = [
 ];
 
 export function isDemoStateAction(value: unknown): value is DemoStateAction {
-  return typeof value === "string" && actions.includes(value as DemoStateAction);
+  return (
+    typeof value === "string" &&
+    DEMO_STATE_ACTIONS.includes(value as DemoStateAction)
+  );
 }
 
 export function isAppointmentTime(value: unknown): value is AppointmentTime {
   return ["09:00", "10:30", "15:00"].includes(String(value));
+}
+
+export function isAppointmentProvider(
+  value: unknown,
+): value is AppointmentProvider {
+  return ["Dr. Ana Costa", "Dr. John Lima"].includes(String(value));
+}
+
+export function isAppointmentSpecialty(
+  value: unknown,
+): value is AppointmentSpecialty {
+  return ["Primary Care", "Cardiology", "Dermatology"].includes(String(value));
+}
+
+export function isMessageReadState(value: unknown): value is MessageReadState {
+  if (!value || typeof value !== "object") return false;
+  const read = value as Partial<MessageReadState>;
+  return (
+    (read.patient === null || typeof read.patient === "string") &&
+    (read.staff === null || typeof read.staff === "string")
+  );
+}
+
+/**
+ * Messages addressed to `role` that arrived after the last one it read.
+ * Replaces the badge that used to render `messages.length`, which counted the
+ * reader's own sent messages.
+ */
+export function countUnreadMessages(
+  state: DemoState,
+  role: DemoActorRole,
+): number {
+  const lastReadId = state.lastRead[role];
+  const lastReadIndex = lastReadId
+    ? state.messages.findIndex((message) => message.id === lastReadId)
+    : -1;
+  return state.messages
+    .slice(lastReadIndex + 1)
+    .filter((message) => message.sender !== role).length;
 }
 
 export function isIntakeSubmission(value: unknown): value is IntakeSubmission {
@@ -210,11 +295,14 @@ export function transitionDemoState(
     role === "patient" &&
     ![
       "book-appointment",
+      "confirm-appointment",
       "reschedule-appointment",
       "cancel-appointment",
+      "check-in-appointment",
       "complete-intake",
       "submit-intake",
       "send-message",
+      "mark-messages-read",
       "update-insurance",
       "request-refill",
     ].includes(action)
@@ -229,10 +317,11 @@ export function transitionDemoState(
   if (
     role === "staff" &&
     ![
-      "check-in-appointment",
+      "no-show-appointment",
       "start-appointment",
       "complete-appointment",
       "send-message",
+      "mark-messages-read",
       "approve-refill",
       "decline-refill",
     ].includes(action)
@@ -249,7 +338,8 @@ export function transitionDemoState(
       if (
         state.appointmentStatus !== "none" &&
         state.appointmentStatus !== "cancelled" &&
-        state.appointmentStatus !== "completed"
+        state.appointmentStatus !== "completed" &&
+        state.appointmentStatus !== "no-show"
       ) {
         return {
           ok: false,
@@ -264,22 +354,59 @@ export function transitionDemoState(
           error: "Choose an available appointment time.",
         };
       }
+      if (input.provider !== undefined && !isAppointmentProvider(input.provider)) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Choose an available provider.",
+        };
+      }
+      if (
+        input.specialty !== undefined &&
+        !isAppointmentSpecialty(input.specialty)
+      ) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Choose an available specialty.",
+        };
+      }
       return {
         ok: true,
         state: {
           ...state,
-          appointmentBooked: true,
           appointmentStatus: "scheduled",
           appointmentTime: input.appointmentTime,
+          appointmentProvider: isAppointmentProvider(input.provider)
+            ? input.provider
+            : "Dr. Ana Costa",
+          appointmentSpecialty: isAppointmentSpecialty(input.specialty)
+            ? input.specialty
+            : "Primary Care",
         },
       };
     }
-    case "reschedule-appointment":
+    case "confirm-appointment":
       if (state.appointmentStatus !== "scheduled") {
         return {
           ok: false,
           status: 409,
-          error: "Only a scheduled appointment can be rescheduled.",
+          error: "Only a scheduled appointment can be confirmed.",
+        };
+      }
+      return {
+        ok: true,
+        state: { ...state, appointmentStatus: "confirmed" },
+      };
+    case "reschedule-appointment":
+      if (
+        state.appointmentStatus !== "scheduled" &&
+        state.appointmentStatus !== "confirmed"
+      ) {
+        return {
+          ok: false,
+          status: 409,
+          error: "Only a scheduled or confirmed appointment can be rescheduled.",
         };
       }
       if (!isAppointmentTime(input.appointmentTime)) {
@@ -289,37 +416,87 @@ export function transitionDemoState(
           error: "Choose an available appointment time.",
         };
       }
+      if (input.provider !== undefined && !isAppointmentProvider(input.provider)) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Choose an available provider.",
+        };
+      }
+      if (
+        input.specialty !== undefined &&
+        !isAppointmentSpecialty(input.specialty)
+      ) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Choose an available specialty.",
+        };
+      }
+      // A new time invalidates the previous confirmation.
       return {
         ok: true,
-        state: { ...state, appointmentTime: input.appointmentTime },
+        state: {
+          ...state,
+          appointmentStatus: "scheduled",
+          appointmentTime: input.appointmentTime,
+          appointmentProvider: isAppointmentProvider(input.provider)
+            ? input.provider
+            : state.appointmentProvider,
+          appointmentSpecialty: isAppointmentSpecialty(input.specialty)
+            ? input.specialty
+            : state.appointmentSpecialty,
+        },
       };
     case "cancel-appointment":
-      if (state.appointmentStatus !== "scheduled") {
+      if (
+        state.appointmentStatus !== "scheduled" &&
+        state.appointmentStatus !== "confirmed"
+      ) {
         return {
           ok: false,
           status: 409,
-          error: "Only a scheduled appointment can be cancelled.",
+          error: "Only a scheduled or confirmed appointment can be cancelled.",
         };
       }
       return {
         ok: true,
         state: {
           ...state,
-          appointmentBooked: false,
           appointmentStatus: "cancelled",
+          appointmentProvider: null,
+          appointmentSpecialty: null,
         },
       };
     case "check-in-appointment":
-      if (state.appointmentStatus !== "scheduled") {
+      if (state.appointmentStatus !== "confirmed") {
         return {
           ok: false,
           status: 409,
-          error: "Only a scheduled appointment can be checked in.",
+          error: "Confirm the appointment before checking in.",
         };
       }
       return {
         ok: true,
         state: { ...state, appointmentStatus: "checked-in" },
+      };
+    case "no-show-appointment":
+      if (
+        state.appointmentStatus !== "scheduled" &&
+        state.appointmentStatus !== "confirmed"
+      ) {
+        return {
+          ok: false,
+          status: 409,
+          error: "Only an appointment still awaiting arrival can be marked as not attended.",
+        };
+      }
+      return {
+        ok: true,
+        state: {
+          ...state,
+          appointmentStatus: "no-show",
+        },
       };
     case "start-appointment":
       if (state.appointmentStatus !== "checked-in") {
@@ -345,20 +522,33 @@ export function transitionDemoState(
         ok: true,
         state: {
           ...state,
-          appointmentBooked: false,
           appointmentStatus: "completed",
         },
       };
+
     case "complete-intake":
+      if (!ACTIVE_APPOINTMENT_STATUSES.includes(state.appointmentStatus)) {
+        return {
+          ok: false,
+          status: 409,
+          error: INTAKE_REQUIRES_APPOINTMENT,
+        };
+      }
       return {
         ok: true,
         state: {
           ...state,
-          intakeComplete: true,
           intakeSubmission: DEFAULT_INTAKE_SUBMISSION,
         },
       };
     case "submit-intake": {
+      if (!ACTIVE_APPOINTMENT_STATUSES.includes(state.appointmentStatus)) {
+        return {
+          ok: false,
+          status: 409,
+          error: INTAKE_REQUIRES_APPOINTMENT,
+        };
+      }
       const intakeSubmission = parseIntake(input.intake);
       if (!intakeSubmission) {
         return {
@@ -370,7 +560,20 @@ export function transitionDemoState(
       }
       return {
         ok: true,
-        state: { ...state, intakeComplete: true, intakeSubmission },
+        state: { ...state, intakeSubmission },
+      };
+    }
+    case "mark-messages-read": {
+      const lastMessage = state.messages[state.messages.length - 1];
+      if (!lastMessage || state.lastRead[role] === lastMessage.id) {
+        return { ok: true, state };
+      }
+      return {
+        ok: true,
+        state: {
+          ...state,
+          lastRead: { ...state.lastRead, [role]: lastMessage.id },
+        },
       };
     }
     case "send-message": {

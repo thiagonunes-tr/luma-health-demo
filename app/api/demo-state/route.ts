@@ -33,6 +33,8 @@ export async function PATCH(request: NextRequest) {
   let body: {
     action?: unknown;
     appointmentTime?: unknown;
+    provider?: unknown;
+    specialty?: unknown;
     intake?: unknown;
     messageBody?: unknown;
     insurance?: unknown;
@@ -49,6 +51,8 @@ export async function PATCH(request: NextRequest) {
 
   const result = await applyDemoStateAction(body.action, session.role, {
     appointmentTime: body.appointmentTime,
+    provider: body.provider,
+    specialty: body.specialty,
     intake: body.intake,
     messageBody: body.messageBody,
     insurance: body.insurance,

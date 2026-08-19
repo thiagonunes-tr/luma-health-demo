@@ -604,11 +604,29 @@
       },
       "AppointmentStatus": {
         "type": "string",
-        "enum": ["none", "scheduled", "checked-in", "in-progress", "completed", "cancelled"]
+        "enum": ["none", "scheduled", "confirmed", "checked-in", "in-progress", "completed", "cancelled", "no-show"]
       },
       "AppointmentTime": {
         "type": "string",
         "enum": ["09:00", "10:30", "15:00"]
+      },
+      "AppointmentProvider": {
+        "type": "string",
+        "enum": ["Dr. Ana Costa", "Dr. John Lima"]
+      },
+      "AppointmentSpecialty": {
+        "type": "string",
+        "enum": ["Primary Care", "Cardiology", "Dermatology"]
+      },
+      "MessageReadState": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Last message id each role has read; null means nothing read yet.",
+        "required": ["patient", "staff"],
+        "properties": {
+          "patient": { "type": ["string", "null"] },
+          "staff": { "type": ["string", "null"] }
+        }
       },
       "RefillStatus": {
         "type": "string",
@@ -717,19 +735,19 @@
       "DemoState": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["appointmentBooked", "appointmentStatus", "appointmentTime", "intakeComplete", "intakeSubmission", "refillStatus", "messages", "insurance"],
+        "required": ["appointmentStatus", "appointmentTime", "appointmentProvider", "appointmentSpecialty", "intakeSubmission", "refillStatus", "messages", "lastRead", "insurance"],
         "properties": {
-          "appointmentBooked": {
-            "type": "boolean"
-          },
           "appointmentStatus": {
             "$ref": "#/components/schemas/AppointmentStatus"
           },
           "appointmentTime": {
             "$ref": "#/components/schemas/AppointmentTime"
           },
-          "intakeComplete": {
-            "type": "boolean"
+          "appointmentProvider": {
+            "oneOf": [{ "$ref": "#/components/schemas/AppointmentProvider" }, { "type": "null" }]
+          },
+          "appointmentSpecialty": {
+            "oneOf": [{ "$ref": "#/components/schemas/AppointmentSpecialty" }, { "type": "null" }]
           },
           "intakeSubmission": {
             "oneOf": [
@@ -749,6 +767,9 @@
             "items": {
               "$ref": "#/components/schemas/DemoMessage"
             }
+          },
+          "lastRead": {
+            "$ref": "#/components/schemas/MessageReadState"
           },
           "insurance": {
             "$ref": "#/components/schemas/Insurance"
@@ -774,14 +795,17 @@
             "type": "string",
             "enum": [
               "book-appointment",
+              "confirm-appointment",
               "reschedule-appointment",
               "cancel-appointment",
               "check-in-appointment",
+              "no-show-appointment",
               "start-appointment",
               "complete-appointment",
               "complete-intake",
               "submit-intake",
               "send-message",
+              "mark-messages-read",
               "update-insurance",
               "request-refill",
               "approve-refill",
@@ -790,6 +814,12 @@
           },
           "appointmentTime": {
             "$ref": "#/components/schemas/AppointmentTime"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/AppointmentProvider"
+          },
+          "specialty": {
+            "$ref": "#/components/schemas/AppointmentSpecialty"
           },
           "intake": {
             "$ref": "#/components/schemas/IntakeInput"
