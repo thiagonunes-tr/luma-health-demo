@@ -1,11 +1,13 @@
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+from axe_playwright_python.sync_playwright import Axe
 from playwright.sync_api import Page, sync_playwright
 
 
@@ -16,6 +18,60 @@ BASE_URL = os.environ.get("E2E_BASE_URL", "http://localhost:4173")
 PARSED_BASE_URL = urlparse(BASE_URL)
 HOST = PARSED_BASE_URL.hostname or "127.0.0.1"
 PORT = PARSED_BASE_URL.port or 4173
+
+
+AXE = Axe()
+# Rules the audit and the redesign explicitly own. Failing any of these is a
+# regression, not a new discovery.
+AXE_RULES = [
+  "aria-allowed-attr",
+  "aria-required-attr",
+  "aria-roles",
+  "aria-valid-attr-value",
+  "button-name",
+  "color-contrast",
+  "duplicate-id-aria",
+  "empty-table-header",
+  "form-field-multiple-labels",
+  "html-has-lang",
+  "label",
+  # Landmark structure, added once the shell had real banner/main/contentinfo.
+  "landmark-one-main",
+  "landmark-unique",
+  "region",
+  "bypass",
+  "page-has-heading-one",
+  "skip-link",
+  "link-name",
+  "list",
+  "select-name",
+  "th-has-data-cells",
+]
+
+
+def audit_accessibility(page: Page, surface: str) -> None:
+  """Fail the deploy on any violation of the rules this redesign owns."""
+  results = AXE.run(
+    page,
+    # The Swagger console is vendor DOM (swagger-ui-react); its violations are
+    # not ours to fix and must not gate this deploy.
+    context={"exclude": [[".api-docs-console"]]},
+    options={
+      "runOnly": {"type": "rule", "values": AXE_RULES},
+      "resultTypes": ["violations"],
+    },
+  )
+  violations = results.response.get("violations", [])
+  if violations:
+    lines = []
+    for violation in violations:
+      targets = [node["target"] for node in violation["nodes"]]
+      lines.append(f"  {violation['id']} ({violation['impact']}): {violation['help']}")
+      for target in targets[:4]:
+        lines.append(f"    at {target}")
+    detail = "\n".join(lines)
+    raise AssertionError(f"axe violations on {surface}:\n{detail}")
+  print(f"  axe clean: {surface}")
 
 
 def wait_for_server(process: subprocess.Popen, timeout_seconds: int = 60) -> None:
@@ -49,7 +105,11 @@ def sign_in(page: Page, role: str, email: str, password: str) -> None:
 
 
 def sign_out(page: Page) -> None:
+  # The sidebar row opens Account settings; sign-out is a labelled button inside.
   page.locator(".sidebar-user").click()
+  page.get_by_role("dialog", name="Account settings").get_by_role(
+    "button", name="Sign out"
+  ).click()
   page.get_by_role("heading", name="Sign in to Luma Health").wait_for()
 
 
@@ -71,6 +131,9 @@ def download_summary(page: Page) -> None:
     "Dr. Ana Costa",
     "Blood pressure stable",
     "Continue Losartan 50 mg",
+    # The on-screen disclaimer does not travel with the file, so the file
+    # carries its own.
+    "Fictional demo data for QA training",
   ]:
     assert expected in content
 
@@ -113,6 +176,10 @@ def run_scenario(page: Page) -> None:
   )
   assert anonymous_delete.status == 401
 
+  page.goto(BASE_URL)
+  page.wait_for_load_state("networkidle")
+  audit_accessibility(page, "sign-in screen")
+
   sign_in(
     page,
     "patient",
@@ -137,6 +204,20 @@ def run_scenario(page: Page) -> None:
   )
   assert forbidden.status == 403
 
+  # Pre-visit questions are bound to a visit: with no appointment this is a 409.
+  intake_without_visit = page.request.patch(
+    f"{BASE_URL}/api/demo-state",
+    data={"action": "complete-intake"},
+  )
+  assert intake_without_visit.status == 409
+
+  # Check-in requires a confirmed appointment, and belongs to the patient.
+  early_check_in = page.request.patch(
+    f"{BASE_URL}/api/demo-state",
+    data={"action": "check-in-appointment"},
+  )
+  assert early_check_in.status == 409
+
   page.reload()
   page.wait_for_load_state("networkidle")
   page.get_by_role("button", name="Account settings").click()
@@ -146,14 +227,32 @@ def run_scenario(page: Page) -> None:
   page.get_by_role("dialog", name="Account settings").get_by_label("Close").click()
   page.get_by_role("button", name="Book appointment", exact=True).click()
   page.locator(".time-options label").filter(has_text="9:00 AM").click()
-  page.get_by_role("button", name="Confirm appointment").click()
+  page.get_by_role("button", name="Book this time").click()
   page.get_by_text("Appointment booked", exact=True).wait_for()
+
+  # The two selects are real fields; a chosen provider must not be replaced by
+  # the default in the read-only views.
+  page.get_by_role("button", name="Manage appointment", exact=True).click()
+  page.get_by_label("Provider").select_option("Dr. John Lima")
+  page.get_by_label("Specialty").select_option("Cardiology")
+  page.locator(".time-options label").filter(has_text="9:00 AM").click()
+  page.get_by_role("button", name="Save new time").click()
+  page.get_by_text("Appointment rescheduled", exact=True).wait_for()
+  page.locator(".sidebar").get_by_role("button", name="Appointments").click()
+  page.get_by_text("Cardiology · Follow-up", exact=True).wait_for()
+  page.get_by_text("Dr. John Lima · Room 204", exact=True).wait_for()
+  page.locator(".sidebar").get_by_role("button", name="Home").click()
   page.get_by_role("button", name="Manage appointment", exact=True).click()
   page.locator(".time-options label").filter(has_text="3:00 PM").click()
   page.get_by_role("button", name="Save new time").click()
   page.get_by_text("Appointment rescheduled", exact=True).wait_for()
 
-  page.get_by_role("button", name="Intake form").click()
+  # Rescheduling invalidates any confirmation, so confirm after the final time.
+  page.get_by_role("button", name="Confirm attendance").click()
+  page.get_by_text("Attendance confirmed", exact=True).wait_for()
+
+  sidebar(page, "Health record")
+  page.get_by_role("button", name="Complete form").click()
   page.get_by_label("Reason for visit").select_option("New symptoms")
   page.get_by_label("Current symptoms").fill("Occasional headache after exercise")
   page.get_by_label("Medication changes").fill("Started vitamin D")
@@ -161,7 +260,6 @@ def run_scenario(page: Page) -> None:
   page.get_by_role("button", name="Submit form").click()
   page.get_by_text("Form submitted", exact=True).wait_for()
 
-  sidebar(page, "Forms")
   page.get_by_role("button", name="Update insurance").click()
   page.get_by_label("Insurance provider").fill("Demo Health")
   page.get_by_label("Plan name").fill("QA Gold")
@@ -169,7 +267,7 @@ def run_scenario(page: Page) -> None:
   page.get_by_role("button", name="Save insurance").click()
   page.get_by_text("Insurance updated", exact=True).wait_for()
 
-  sidebar(page, "Overview")
+  sidebar(page, "Home")
   page.get_by_role("button", name="Request a refill").click()
   page.get_by_text("Request submitted", exact=True).wait_for()
 
@@ -182,17 +280,25 @@ def run_scenario(page: Page) -> None:
     "I submitted the form. Should I bring my medication list?"
   ).wait_for()
 
-  sidebar(page, "Results")
+  sidebar(page, "Health record")
+  audit_accessibility(page, "patient · health record")
   page.get_by_role("button", name="View result").click()
   page.get_by_text("13.6 g/dL", exact=True).wait_for()
   page.get_by_text("6.4 K/uL", exact=True).wait_for()
   page.get_by_text("248 K/uL", exact=True).wait_for()
+  audit_accessibility(page, "patient · lab result dialog")
   page.get_by_role("button", name="Done").click()
   page.get_by_role("button", name="Open summary").click()
   download_summary(page)
   page.locator(".clinical-modal").get_by_role(
     "button", name="Close"
   ).last.click()
+
+  # Check-in is the patient's own step now, not a staff action.
+  sidebar(page, "Home")
+  audit_accessibility(page, "patient · home")
+  page.get_by_role("button", name="Check in now").click()
+  page.get_by_text("You are checked in", exact=True).wait_for()
 
   sign_out(page)
   sign_in(
@@ -205,15 +311,19 @@ def run_scenario(page: Page) -> None:
   page.locator(".patient-results").get_by_role(
     "button", name="Maria Lopez"
   ).click()
-  page.get_by_text("Scheduled · 3:00 PM", exact=True).wait_for()
+  page.get_by_text("Checked in · 3:00 PM", exact=True).wait_for()
   page.get_by_text("Demo Health · QA Gold", exact=True).wait_for()
   page.get_by_role("button", name="Open visit summary").click()
   download_summary(page)
   page.locator(".clinical-modal").get_by_role(
     "button", name="Close"
   ).last.click()
-  page.get_by_label("Close").click()
+  # Opening the summary closes the patient-search dialog, so only one
+  # aria-modal dialog is ever mounted. Assert that instead of closing it again.
+  assert page.locator('[role="dialog"]').count() == 0
 
+  sidebar(page, "Requests")
+  audit_accessibility(page, "staff · requests")
   page.locator(
     '[aria-label="Maria Lopez submitted intake form"]'
   ).get_by_role("button", name="Review form").click()
@@ -234,11 +344,13 @@ def run_scenario(page: Page) -> None:
     "Yes, please bring the current medication list."
   ).wait_for()
 
-  sidebar(page, "Overview")
+  sidebar(page, "Requests")
   page.get_by_role("button", name="Approve").click()
   page.get_by_text("Refill approved", exact=True).wait_for()
+
+  sidebar(page, "Today")
+  audit_accessibility(page, "staff · today")
   page.get_by_label("Review Maria Lopez's new appointment").click()
-  page.get_by_role("button", name="Check in patient").click()
   page.get_by_role("button", name="Start visit").click()
   page.get_by_role("button", name="Complete visit").click()
   page.get_by_text("Visit completed", exact=True).wait_for()
@@ -252,6 +364,14 @@ def run_scenario(page: Page) -> None:
   )
   assert invalid_transition.status == 409
 
+  # Reloading with a live staff session used to leave <main> empty, because the
+  # restored session kept the patient's default destination, which staff has no
+  # branch for. Assert the staff landing page survives a reload.
+  page.reload()
+  page.wait_for_load_state("networkidle")
+  page.get_by_role("heading", name="Good morning, Thiago.").wait_for()
+  assert page.locator("main#main-content").inner_text().strip() != ""
+
   sign_out(page)
   sign_in(
     page,
@@ -261,6 +381,8 @@ def run_scenario(page: Page) -> None:
   )
   page.get_by_role("heading", name="Visit completed").wait_for()
   page.get_by_text("Refill approved by the clinic", exact=True).wait_for()
+  # The unread badge counts messages from the other role, not the thread length.
+  page.locator(".sidebar").get_by_role("button", name="Messages 1").wait_for()
   sidebar(page, "Messages")
   page.get_by_text(
     "Yes, please bring the current medication list."
@@ -270,6 +392,9 @@ def run_scenario(page: Page) -> None:
   assert final_reset.status == 200
   state = final_reset.json()["state"]
   assert state["appointmentStatus"] == "none"
+  assert state["appointmentProvider"] is None
+  assert state["appointmentSpecialty"] is None
+  assert state["lastRead"] == {"patient": None, "staff": None}
   assert state["intakeSubmission"] is None
   assert state["refillStatus"] == "none"
   assert len(state["messages"]) == 2
@@ -305,6 +430,7 @@ def main() -> None:
     stdout=server_log,
     stderr=subprocess.STDOUT,
     text=True,
+    start_new_session=True,
   )
 
   try:
@@ -336,11 +462,19 @@ def main() -> None:
       finally:
         browser.close()
   finally:
-    process.terminate()
+    # npm spawns vinext as a child; terminating only the wrapper leaves the
+    # server holding the port, which breaks the next run. Signal the group.
+    try:
+      os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+      process.terminate()
     try:
       process.wait(timeout=10)
     except subprocess.TimeoutExpired:
-      process.kill()
+      try:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+      except (ProcessLookupError, PermissionError):
+        process.kill()
       process.wait(timeout=5)
     server_log.close()
     if secret_created:
