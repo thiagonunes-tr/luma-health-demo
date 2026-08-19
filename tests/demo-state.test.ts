@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  type DemoState,
   DEFAULT_DEMO_STATE,
   DEFAULT_INTAKE_SUBMISSION,
   INTAKE_REQUIRES_APPOINTMENT,
+  countNewResults,
+  countPendingRefills,
+  countRefillableMedications,
   countUnreadMessages,
   isDemoStateAction,
   transitionDemoState,
@@ -198,26 +202,84 @@ test("patient updates validated insurance information", () => {
   assert.equal(staffUpdate.status, 403);
 });
 
-test("patient can submit one pending refill request", () => {
-  const requested = transitionDemoState(
+const FIRST_MEDICATION = DEFAULT_DEMO_STATE.medications[0].id;
+const SECOND_MEDICATION = DEFAULT_DEMO_STATE.medications[1].id;
+
+/** A state where exactly one medication is waiting on clinic staff. */
+function withPendingRefill(medicationId = FIRST_MEDICATION) {
+  return {
+    ...DEFAULT_DEMO_STATE,
+    medications: DEFAULT_DEMO_STATE.medications.map(med =>
+      med.id === medicationId ? { ...med, refillStatus: "pending" as const } : med,
+    ),
+  };
+}
+
+function refillStatusOf(state: DemoState, medicationId: string) {
+  return state.medications.find(med => med.id === medicationId)?.refillStatus;
+}
+
+test("a refill request names the medication it is for", () => {
+  // The point of per-medication refills: an unaddressed request is malformed,
+  // not merely out of sequence, so it is a 400 rather than a 409.
+  const unaddressed = transitionDemoState(
     DEFAULT_DEMO_STATE,
     "request-refill",
     "patient",
   );
+  assert.deepEqual(unaddressed, {
+    ok: false,
+    status: 400,
+    error: "Choose one of the medications on file.",
+  });
+
+  const unknown = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "request-refill",
+    "patient",
+    { medicationId: "med-does-not-exist" },
+  );
+  assert.equal(unknown.ok, false);
+  if (unknown.ok) return;
+  assert.equal(unknown.status, 400);
+});
+
+test("patient can submit one pending refill per medication", () => {
+  const requested = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "request-refill",
+    "patient",
+    { medicationId: FIRST_MEDICATION },
+  );
   assert.equal(requested.ok, true);
   if (!requested.ok) return;
-  assert.equal(requested.state.refillStatus, "pending");
+  assert.equal(refillStatusOf(requested.state, FIRST_MEDICATION), "pending");
 
   const duplicate = transitionDemoState(
     requested.state,
     "request-refill",
     "patient",
+    { medicationId: FIRST_MEDICATION },
   );
-  assert.deepEqual(duplicate, {
-    ok: false,
-    status: 409,
-    error: "This refill request is already under review.",
-  });
+  assert.equal(duplicate.ok, false);
+  if (duplicate.ok) return;
+  assert.equal(duplicate.status, 409);
+  assert.match(duplicate.error, /already under review/);
+});
+
+test("one medication's refill does not touch the others", () => {
+  const requested = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "request-refill",
+    "patient",
+    { medicationId: SECOND_MEDICATION },
+  );
+  assert.equal(requested.ok, true);
+  if (!requested.ok) return;
+  assert.equal(refillStatusOf(requested.state, SECOND_MEDICATION), "pending");
+  assert.equal(refillStatusOf(requested.state, FIRST_MEDICATION), "none");
+  assert.equal(countPendingRefills(requested.state), 1);
+  assert.equal(countRefillableMedications(requested.state), 2);
 });
 
 test("staff can approve only a pending refill", () => {
@@ -225,46 +287,143 @@ test("staff can approve only a pending refill", () => {
     DEFAULT_DEMO_STATE,
     "approve-refill",
     "staff",
+    { medicationId: FIRST_MEDICATION },
   );
   assert.equal(withoutRequest.ok, false);
   if (withoutRequest.ok) return;
   assert.equal(withoutRequest.status, 409);
 
-  const pending = {
-    ...DEFAULT_DEMO_STATE,
-    refillStatus: "pending" as const,
-  };
-  const approved = transitionDemoState(pending, "approve-refill", "staff");
+  const approved = transitionDemoState(
+    withPendingRefill(),
+    "approve-refill",
+    "staff",
+    { medicationId: FIRST_MEDICATION },
+  );
   assert.equal(approved.ok, true);
   if (!approved.ok) return;
-  assert.equal(approved.state.refillStatus, "approved");
+  assert.equal(refillStatusOf(approved.state, FIRST_MEDICATION), "approved");
+  assert.equal(countPendingRefills(approved.state), 0);
 });
 
 test("declined refill can be submitted again by the patient", () => {
-  const pending = {
-    ...DEFAULT_DEMO_STATE,
-    refillStatus: "pending" as const,
-  };
-  const declined = transitionDemoState(pending, "decline-refill", "staff");
+  const declined = transitionDemoState(
+    withPendingRefill(),
+    "decline-refill",
+    "staff",
+    { medicationId: FIRST_MEDICATION },
+  );
   assert.equal(declined.ok, true);
   if (!declined.ok) return;
-  assert.equal(declined.state.refillStatus, "rejected");
+  assert.equal(refillStatusOf(declined.state, FIRST_MEDICATION), "rejected");
 
   const requestedAgain = transitionDemoState(
     declined.state,
     "request-refill",
     "patient",
+    { medicationId: FIRST_MEDICATION },
   );
   assert.equal(requestedAgain.ok, true);
   if (!requestedAgain.ok) return;
-  assert.equal(requestedAgain.state.refillStatus, "pending");
+  assert.equal(refillStatusOf(requestedAgain.state, FIRST_MEDICATION), "pending");
+});
+
+test("an approved refill cannot be requested again", () => {
+  const approved = transitionDemoState(
+    withPendingRefill(),
+    "approve-refill",
+    "staff",
+    { medicationId: FIRST_MEDICATION },
+  );
+  assert.equal(approved.ok, true);
+  if (!approved.ok) return;
+
+  const again = transitionDemoState(
+    approved.state,
+    "request-refill",
+    "patient",
+    { medicationId: FIRST_MEDICATION },
+  );
+  assert.equal(again.ok, false);
+  if (again.ok) return;
+  assert.equal(again.status, 409);
+  assert.equal(countRefillableMedications(approved.state), 2);
+});
+
+test("opening a result marks only that result viewed, and repeats are no-ops", () => {
+  const target = DEFAULT_DEMO_STATE.results[0].id;
+  assert.equal(countNewResults(DEFAULT_DEMO_STATE), 2);
+
+  const viewed = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "acknowledge-result",
+    "patient",
+    { resultId: target },
+  );
+  assert.equal(viewed.ok, true);
+  if (!viewed.ok) return;
+  assert.equal(countNewResults(viewed.state), 1);
+  assert.equal(
+    viewed.state.results.find(result => result.id === target)?.status,
+    "viewed",
+  );
+
+  // Re-opening is not an error: the patient did nothing wrong by looking twice.
+  const again = transitionDemoState(
+    viewed.state,
+    "acknowledge-result",
+    "patient",
+    { resultId: target },
+  );
+  assert.equal(again.ok, true);
+  if (!again.ok) return;
+  assert.equal(countNewResults(again.state), 1);
+});
+
+test("acknowledging an unknown result is rejected as malformed", () => {
+  const unknown = transitionDemoState(
+    DEFAULT_DEMO_STATE,
+    "acknowledge-result",
+    "patient",
+    { resultId: "result-does-not-exist" },
+  );
+  assert.deepEqual(unknown, {
+    ok: false,
+    status: 400,
+    error: "Choose one of the results on file.",
+  });
+});
+
+test("a statement can be paid once", () => {
+  assert.equal(DEFAULT_DEMO_STATE.statement.status, "unpaid");
+
+  const paid = transitionDemoState(DEFAULT_DEMO_STATE, "pay-statement", "patient");
+  assert.equal(paid.ok, true);
+  if (!paid.ok) return;
+  assert.equal(paid.state.statement.status, "paid");
+
+  const twice = transitionDemoState(paid.state, "pay-statement", "patient");
+  assert.equal(twice.ok, false);
+  if (twice.ok) return;
+  assert.equal(twice.status, 409);
+});
+
+test("clinic staff cannot pay a patient's statement or open their results", () => {
+  for (const action of ["pay-statement", "acknowledge-result"] as const) {
+    const attempt = transitionDemoState(DEFAULT_DEMO_STATE, action, "staff", {
+      resultId: DEFAULT_DEMO_STATE.results[0].id,
+    });
+    assert.equal(attempt.ok, false, action);
+    if (attempt.ok) return;
+    assert.equal(attempt.status, 403, action);
+  }
 });
 
 test("roles cannot execute actions assigned to the other portal", () => {
   const patientApproval = transitionDemoState(
-    { ...DEFAULT_DEMO_STATE, refillStatus: "pending" },
+    withPendingRefill(),
     "approve-refill",
     "patient",
+    { medicationId: FIRST_MEDICATION },
   );
   assert.equal(patientApproval.ok, false);
   if (patientApproval.ok) return;
@@ -320,6 +479,7 @@ test("patient workflow remains available when staff reviews the refill", () => {
     intake.state,
     "request-refill",
     "patient",
+    { medicationId: FIRST_MEDICATION },
   );
   assert.equal(refill.ok, true);
   if (!refill.ok) return;
@@ -328,12 +488,19 @@ test("patient workflow remains available when staff reviews the refill", () => {
     refill.state,
     "approve-refill",
     "staff",
+    { medicationId: FIRST_MEDICATION },
   );
   assert.equal(reviewed.ok, true);
   if (!reviewed.ok) return;
+  // The refill review must leave the visit untouched: the two flows share one
+  // state atom, so a wide update here would silently undo the intake.
   assert.deepEqual(reviewed.state, {
     ...intake.state,
-    refillStatus: "approved",
+    medications: intake.state.medications.map(med =>
+      med.id === FIRST_MEDICATION
+        ? { ...med, refillStatus: "approved" as const }
+        : med,
+    ),
   });
 });
 

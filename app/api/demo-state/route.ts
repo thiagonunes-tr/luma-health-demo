@@ -38,6 +38,8 @@ export async function PATCH(request: NextRequest) {
     intake?: unknown;
     messageBody?: unknown;
     insurance?: unknown;
+    medicationId?: unknown;
+    resultId?: unknown;
   };
   try {
     body = await request.json();
@@ -56,6 +58,8 @@ export async function PATCH(request: NextRequest) {
     intake: body.intake,
     messageBody: body.messageBody,
     insurance: body.insurance,
+    medicationId: body.medicationId,
+    resultId: body.resultId,
   });
   if (!result.ok) {
     return NextResponse.json(

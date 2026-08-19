@@ -4,6 +4,9 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } 
 import {
   ACTIVE_APPOINTMENT_STATUSES,
   DEFAULT_DEMO_STATE,
+  countNewResults,
+  countPendingRefills,
+  countRefillableMedications,
   countUnreadMessages,
 } from "../lib/demo-state";
 import type {
@@ -16,6 +19,7 @@ import type {
   DemoStateAction,
   InsuranceInfo,
   IntakeSubmission,
+  LabResult,
   RefillStatus,
 } from "../lib/demo-state";
 import { Icon, type IconName } from "./Icon";
@@ -27,14 +31,22 @@ type AppointmentAdvanceAction =
   | "complete-appointment"
   | "no-show-appointment";
 type Toast = { title: string; message: string; tone: "success" | "error" } | null;
+type ThemePreference = "light" | "dark" | null;
+const THEME_STORAGE_KEY = "luma-theme";
+/**
+ * One atom for "which dialog is open", including whatever that dialog needs to
+ * know. Keeping the lab result's id inside the atom rather than in a second
+ * state field is what makes "at most one dialog is mounted" structural: the
+ * re-audit found two dialogs mounted at once when two fields disagreed.
+ */
 type PortalModal =
   | null
-  | "account"
-  | "booking"
-  | "intake"
-  | "insurance"
-  | "lab-result"
-  | "visit-summary";
+  | { kind: "account" }
+  | { kind: "booking" }
+  | { kind: "intake" }
+  | { kind: "insurance" }
+  | { kind: "lab-result"; resultId: string }
+  | { kind: "visit-summary" };
 type StaffModal = null | "appointment" | "intake-review" | "patient-search";
 type AuthUser = { email: string; name: string; role: Role };
 type Challenge = {
@@ -78,7 +90,12 @@ const patientProfiles: PatientProfile[] = [
   { name: "Riley Smith", initials: "RS", dateOfBirth: "March 30, 1995", email: "riley.smith@example.test", lastVisit: "June 11, 2026" },
 ];
 
-type PatientNavId = "home" | "appointments" | "record" | "messages";
+type PatientNavId =
+  | "home"
+  | "appointments"
+  | "medications"
+  | "record"
+  | "messages";
 type StaffNavId = "today" | "requests" | "messages";
 type NavId = PatientNavId | StaffNavId;
 type NavEntry = { id: NavId; label: string; icon: IconName };
@@ -86,6 +103,7 @@ type NavEntry = { id: NavId; label: string; icon: IconName };
 const PATIENT_NAV: NavEntry[] = [
   { id: "home", label: "Home", icon: "home" },
   { id: "appointments", label: "Appointments", icon: "calendar" },
+  { id: "medications", label: "Medications", icon: "pill" },
   { id: "record", label: "Health record", icon: "clipboard" },
   { id: "messages", label: "Messages", icon: "message" },
 ];
@@ -145,6 +163,76 @@ function FieldError({ name, errors }: { name: string; errors: Record<string, str
   return <p className="field-error" id={`${name}-error`} role="alert">{errors[name]}</p>;
 }
 
+/**
+ * Resolves a theme preference onto the document. The dark palette is selected by
+ * `[data-theme="dark"]` rather than a media query, so that a reader can override
+ * the system preference; "system" keeps following it, including live changes.
+ */
+function useTheme(): [boolean, (next: "light" | "dark") => void] {
+  // Read once via a lazy initialiser rather than in an effect: setting state
+  // synchronously in an effect body triggers a cascading render. The guard
+  // covers the Worker render, where localStorage does not exist.
+  const [preference, setPreference] = useState<ThemePreference>(() => {
+    if (typeof window === "undefined") return null;
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return stored === "light" || stored === "dark" ? stored : null;
+  });
+  const [systemDark, setSystemDark] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const sync = () => setSystemDark(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  const isDark = preference === null ? systemDark : preference === "dark";
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = isDark ? "dark" : "light";
+  }, [isDark]);
+
+  function choose(next: "light" | "dark") {
+    setPreference(next);
+    window.localStorage.setItem(THEME_STORAGE_KEY, next);
+  }
+
+  return [isDark, choose];
+}
+
+/**
+ * A two-position switch rather than a three-option menu: the sun and the moon
+ * name the two outcomes, and role="switch" gives assistive tech the on/off
+ * semantics that a menu of three values would not.
+ */
+function ThemeSwitch({ isDark, onChange }: {
+  isDark: boolean;
+  onChange: (next: "light" | "dark") => void;
+}) {
+  return <button
+    type="button"
+    className="theme-switch"
+    role="switch"
+    aria-checked={isDark}
+    aria-label="Dark mode"
+    onClick={() => onChange(isDark ? "light" : "dark")}
+  >
+    <span className="theme-switch-icon" aria-hidden="true"><Icon name="sun" size={15} /></span>
+    <span className="theme-switch-track" aria-hidden="true"><i /></span>
+    <span className="theme-switch-icon" aria-hidden="true"><Icon name="moon" size={15} /></span>
+  </button>;
+}
+
+/** "9:15 AM" -> 555. Used to keep the clinic schedule in chronological order. */
+function minutesOfDay(label: string): number {
+  const match = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(label.trim());
+  if (!match) return Number.MAX_SAFE_INTEGER;
+  const [, rawHour, minute, meridiem] = match;
+  const hour = Number(rawHour) % 12 + (meridiem.toUpperCase() === "PM" ? 12 : 0);
+  return hour * 60 + Number(minute);
+}
+
 function refillStatusLabel(status: RefillStatus): string {
   return {
     none: "No request",
@@ -174,9 +262,13 @@ export default function Home() {
   const [authError, setAuthError] = useState("");
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [activeNav, setActiveNav] = useState<NavId>("home");
+  const [isDarkTheme, chooseTheme] = useTheme();
   // One discriminant instead of six booleans that were never meant to overlap.
   const [activeModal, setActiveModal] = useState<PortalModal>(null);
   const closeModal = () => setActiveModal(null);
+  // Which row the in-flight action belongs to. Three medications share the
+  // "request-refill" action, so the action name alone would light up all three.
+  const [demoBusyTarget, setDemoBusyTarget] = useState<string | null>(null);
   const [demo, setDemo] = useState<DemoState>(DEFAULT_DEMO_STATE);
   // Derived rather than stored: setting state synchronously inside the effect
   // body triggers cascading renders. Track which account's state has landed.
@@ -194,7 +286,7 @@ export default function Home() {
   // A personal account shares Maria Lopez's clinical record; say so plainly.
   const sharedRecord = role === "patient" && user?.email !== DEMO_PATIENT_EMAIL;
   const unreadMessages = countUnreadMessages(demo, role);
-  const displayName = user?.name ?? (role === "patient" ? "Maria Lopez" : "Thiago Nunes");
+  const displayName = user?.name ?? (role === "patient" ? "Maria Lopez" : "Daniel Reyes");
   const initials = displayName
     .split(/\s+/)
     .filter(Boolean)
@@ -332,9 +424,15 @@ export default function Home() {
   }
 
 
+  /**
+   * A null `successTitle` runs the action silently: no success toast and no
+   * error toast. Two actions are housekeeping the user did not ask for —
+   * clearing a read marker and marking a result opened — and announcing either
+   * one would be chrome reporting on itself.
+   */
   async function performDemoAction(
     action: DemoStateAction,
-    successTitle: string,
+    successTitle: string | null,
     successMessage: string,
     input: {
       appointmentTime?: AppointmentTime;
@@ -343,10 +441,13 @@ export default function Home() {
       intake?: Omit<IntakeSubmission, "submittedAt">;
       messageBody?: string;
       insurance?: Omit<InsuranceInfo, "updatedAt">;
+      medicationId?: string;
+      resultId?: string;
     } = {},
   ): Promise<boolean> {
     if (demoBusy) return false;
     setDemoBusy(action);
+    setDemoBusyTarget(input.medicationId ?? input.resultId ?? null);
     try {
       const response = await fetch("/api/demo-state", {
         method: "PATCH",
@@ -358,17 +459,20 @@ export default function Home() {
         throw new Error(friendlyActionError(response.status, data.error));
       }
       setDemo(data.state);
-      notify(successTitle, successMessage);
+      if (successTitle !== null) notify(successTitle, successMessage);
       return true;
     } catch (error) {
-      notify(
-        "Action not saved",
-        error instanceof Error ? error.message : "Please try again.",
-        "error",
-      );
+      if (successTitle !== null) {
+        notify(
+          "Action not saved",
+          error instanceof Error ? error.message : "Please try again.",
+          "error",
+        );
+      }
       return false;
     } finally {
       setDemoBusy(null);
+      setDemoBusyTarget(null);
     }
   }
 
@@ -448,11 +552,38 @@ export default function Home() {
     if (saved) closeModal();
   }
 
-  async function requestRefill() {
+  function medicationName(medicationId: string): string {
+    return demo.medications.find(med => med.id === medicationId)?.name ??
+      "this medication";
+  }
+
+  async function requestRefill(medicationId: string) {
     await performDemoAction(
       "request-refill",
       "Request submitted",
-      "Clinic staff can now review your refill request.",
+      `Clinic staff can now review your refill for ${medicationName(medicationId)}.`,
+      { medicationId },
+    );
+  }
+
+  /**
+   * Opening a result is the acknowledgement. Marking it read as a separate step
+   * would be a control whose only job is to tell the app what it just watched
+   * the patient do.
+   */
+  async function openResult(resultId: string) {
+    setActiveModal({ kind: "lab-result", resultId });
+    const result = demo.results.find(item => item.id === resultId);
+    if (result?.status === "new") {
+      await performDemoAction("acknowledge-result", null, "", { resultId });
+    }
+  }
+
+  async function payStatement() {
+    await performDemoAction(
+      "pay-statement",
+      "Statement paid",
+      "No money moved: this demo records the payment and nothing else.",
     );
   }
 
@@ -491,19 +622,21 @@ export default function Home() {
     if (saved) closeModal();
   }
 
-  async function approveRefill() {
+  async function approveRefill(medicationId: string) {
     await performDemoAction(
       "approve-refill",
       "Refill approved",
-      "The patient will see the update in the portal.",
+      `The patient will see the ${medicationName(medicationId)} update in the portal.`,
+      { medicationId },
     );
   }
 
-  async function declineRefill() {
+  async function declineRefill(medicationId: string) {
     await performDemoAction(
       "decline-refill",
       "Refill declined",
-      "The patient can now submit a new request.",
+      `The patient can submit a new request for ${medicationName(medicationId)}.`,
+      { medicationId },
     );
   }
 
@@ -545,11 +678,10 @@ export default function Home() {
         patientName={displayName.split(/\s+/)[0] || "there"}
         demo={demo}
         busyAction={demoBusy}
-        onBook={() => setActiveModal("booking")}
+        onBook={() => setActiveModal({ kind: "booking" })}
         onConfirm={confirmAppointment}
         onCheckIn={checkInAppointment}
-        onOpenIntake={() => setActiveModal("intake")}
-        onRequestRefill={requestRefill}
+        onOpenIntake={() => setActiveModal({ kind: "intake" })}
         onGoTo={setActiveNav}
       />
     ),
@@ -558,19 +690,30 @@ export default function Home() {
         sharedRecord={sharedRecord}
         demo={demo}
         busyAction={demoBusy}
-        onBook={() => setActiveModal("booking")}
+        onBook={() => setActiveModal({ kind: "booking" })}
         onConfirm={confirmAppointment}
         onCheckIn={checkInAppointment}
+      />
+    ),
+    medications: () => (
+      <PatientMedications
+        sharedRecord={sharedRecord}
+        demo={demo}
+        busyAction={demoBusy}
+        busyTarget={demoBusyTarget}
+        onRequestRefill={requestRefill}
       />
     ),
     record: () => (
       <HealthRecord
         demo={demo}
         sharedRecord={sharedRecord}
-        onOpenIntake={() => setActiveModal("intake")}
-        onOpenInsurance={() => setActiveModal("insurance")}
-        onOpenLab={() => setActiveModal("lab-result")}
-        onOpenSummary={() => setActiveModal("visit-summary")}
+        busyAction={demoBusy}
+        onOpenIntake={() => setActiveModal({ kind: "intake" })}
+        onOpenInsurance={() => setActiveModal({ kind: "insurance" })}
+        onOpenResult={openResult}
+        onPayStatement={payStatement}
+        onOpenSummary={() => setActiveModal({ kind: "visit-summary" })}
       />
     ),
     messages: messageCenter,
@@ -583,7 +726,7 @@ export default function Home() {
         demo={demo}
         busyAction={demoBusy}
         onAdvanceAppointment={advanceAppointment}
-        onOpenSummary={() => setActiveModal("visit-summary")}
+        onOpenSummary={() => setActiveModal({ kind: "visit-summary" })}
         onGoTo={setActiveNav}
       />
     ),
@@ -591,6 +734,7 @@ export default function Home() {
       <StaffRequests
         demo={demo}
         busyAction={demoBusy}
+        busyTarget={demoBusyTarget}
         onApproveRefill={approveRefill}
         onDeclineRefill={declineRefill}
       />
@@ -655,11 +799,6 @@ export default function Home() {
           <span className="help-icon" aria-hidden="true"><Icon name="help-circle" size={18} /></span>
           <div><strong>Demo environment</strong><small>No support channel exists</small></div>
         </div>
-        <button className="sidebar-user" onClick={() => setActiveModal("account")}>
-          <span className="avatar">{initials}</span>
-          <div><strong>{displayName}</strong><small>{role === "patient" ? "Patient" : "Clinic staff"}</small></div>
-          <span className="user-action">Account <Icon name="arrow-right" size={13} /></span>
-        </button>
       </aside>
 
       <div className="workspace">
@@ -668,7 +807,8 @@ export default function Home() {
             <span className="brand-mark small" aria-hidden="true"><i></i><b></b></span>Luma Health
           </button>
           <div className="top-actions">
-            <button className="top-user" onClick={() => setActiveModal("account")} aria-label="Account settings"><span className="avatar">{initials}</span><span><strong>{displayName}</strong><small>{role === "patient" ? "Patient · Account settings" : "Clinic staff · Account settings"}</small></span></button>
+            <ThemeSwitch isDark={isDarkTheme} onChange={chooseTheme} />
+            <button className="top-user" onClick={() => setActiveModal({ kind: "account" })} aria-label="Account settings"><span className="avatar">{initials}</span><span><strong>{displayName}</strong><small>{role === "patient" ? "Patient · Account settings" : "Clinic staff · Account settings"}</small></span></button>
           </div>
         </header>
 
@@ -682,12 +822,12 @@ export default function Home() {
         </footer>
       </div>
 
-      {activeModal === "booking" && <BookingModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} appointmentProvider={demo.appointmentProvider} appointmentSpecialty={demo.appointmentSpecialty} busy={demoBusy !== null} onCancel={cancelAppointment} onClose={() => closeModal()} onSubmit={bookAppointment} />}
-      {activeModal === "intake" && <IntakeFormModal intakeSubmission={intakeSubmission} busy={demoBusy !== null} onClose={() => closeModal()} onSubmit={submitIntake} />}
-      {activeModal === "insurance" && <InsuranceModal insurance={insurance} busy={demoBusy !== null} onClose={() => closeModal()} onSubmit={updateInsurance} />}
-      {activeModal === "lab-result" && <LabResultModal onClose={() => closeModal()} />}
-      {activeModal === "visit-summary" && <VisitSummaryModal onClose={() => closeModal()} />}
-      {activeModal === "account" && <AccountModal user={user} onClose={() => closeModal()} onDeleted={() => { closeModal(); setUser(null); setActiveNav(homeNavFor(role)); }} onSignOut={signOut} />}
+      {activeModal?.kind === "booking" && <BookingModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} appointmentProvider={demo.appointmentProvider} appointmentSpecialty={demo.appointmentSpecialty} busy={demoBusy !== null} onCancel={cancelAppointment} onClose={() => closeModal()} onSubmit={bookAppointment} />}
+      {activeModal?.kind === "intake" && <IntakeFormModal intakeSubmission={intakeSubmission} busy={demoBusy !== null} onClose={() => closeModal()} onSubmit={submitIntake} />}
+      {activeModal?.kind === "insurance" && <InsuranceModal insurance={insurance} busy={demoBusy !== null} onClose={() => closeModal()} onSubmit={updateInsurance} />}
+      {activeModal?.kind === "lab-result" && <LabResultModal result={demo.results.find(item => item.id === activeModal.resultId) ?? null} onClose={() => closeModal()} />}
+      {activeModal?.kind === "visit-summary" && <VisitSummaryModal onClose={() => closeModal()} />}
+      {activeModal?.kind === "account" && <AccountModal user={user} onClose={() => closeModal()} onDeleted={() => { closeModal(); setUser(null); setActiveNav(homeNavFor(role)); }} onSignOut={signOut} />}
       {toast && <div className={`toast ${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"}><span><Icon name={toast.tone === "error" ? "alert-circle" : "check"} size={16} /></span><div><strong>{toast.title}</strong><p>{toast.message}</p></div><button onClick={() => setToast(null)} aria-label="Close"><Icon name="close" size={17} /></button></div>}
     </div>
   );
@@ -891,24 +1031,33 @@ function VisitStep({ appointmentStatus, busyAction, onConfirm, onCheckIn }: {
 function AppointmentHero({ demo, onOpen }: { demo: DemoState; onOpen: () => void }) {
   const { appointmentStatus, appointmentTime, appointmentProvider, appointmentSpecialty } = demo;
   const isAhead = ["scheduled", "confirmed", "checked-in", "in-progress"].includes(appointmentStatus);
-  const provider = appointmentProvider ?? "Dr. Ana Costa";
+  // The provider row is only true while an appointment exists. With none booked,
+  // appointmentProvider is null and the fallback used to name a doctor and a
+  // room number for a visit that had not been arranged.
+  const provider = appointmentProvider;
   const specialty = appointmentSpecialty ?? "Primary Care";
   return <section className="hero-card" aria-label="Next appointment">
     <div className="hero-copy">
       <span className="status-pill"><i></i> {appointmentStatusLabel(appointmentStatus).toUpperCase()}</span>
       <p className="hero-date">{isAhead ? "July 24" : "Patient portal"}</p>
       <h2>{isAhead ? "Follow-up appointment" : appointmentStatus === "completed" ? "Visit completed" : appointmentStatus === "cancelled" ? "Appointment cancelled" : appointmentStatus === "no-show" ? "Appointment missed" : "No appointment scheduled"}</h2>
-      <p className="doctor"><span className="doctor-avatar">{provider.replace("Dr. ", "").split(" ").map(part => part[0]).join("")}</span><span><strong>{provider}</strong><small>{specialty} · Room 204</small></span></p>
+      {provider !== null
+        ? <p className="doctor"><span className="doctor-avatar">{provider.replace("Dr. ", "").split(" ").map(part => part[0]).join("")}</span><span><strong>{provider}</strong><small>{specialty} · Room 204</small></span></p>
+        : <p className="doctor-empty">Pick a time and a provider in Appointments.</p>}
     </div>
     <div className="appointment-time">
-      <strong>{isAhead ? formatAppointmentTime(appointmentTime) : appointmentStatus === "completed" ? "DONE" : "—"}</strong><span>{isAhead ? "clinic time" : "book when ready"}</span>
+      {/* An em-dash at display size is a placeholder for nothing: with no
+          appointment there is no time to show, so the label carries the state. */}
+      {(isAhead || appointmentStatus === "completed") &&
+        <strong>{isAhead ? formatAppointmentTime(appointmentTime) : "DONE"}</strong>}
+      <span>{isAhead ? "clinic time" : "book when ready"}</span>
       <button onClick={onOpen}>Open appointments <Icon name="arrow-right" size={13} /></button>
     </div>
-    <div className="hero-decoration" aria-hidden="true"><i></i><b></b><em></em></div>
+    <div className="hero-decoration" aria-hidden="true" />
   </section>;
 }
 
-function PatientHome({ sharedRecord, patientName, demo, busyAction, onBook, onConfirm, onCheckIn, onOpenIntake, onRequestRefill, onGoTo }: {
+function PatientHome({ sharedRecord, patientName, demo, busyAction, onBook, onConfirm, onCheckIn, onOpenIntake, onGoTo }: {
   sharedRecord: boolean;
   patientName: string;
   demo: DemoState;
@@ -917,13 +1066,16 @@ function PatientHome({ sharedRecord, patientName, demo, busyAction, onBook, onCo
   onConfirm: () => void | Promise<unknown>;
   onCheckIn: () => void | Promise<unknown>;
   onOpenIntake: () => void;
-  onRequestRefill: () => void | Promise<unknown>;
   onGoTo: (id: NavId) => void;
 }) {
-  const { appointmentStatus, intakeSubmission, refillStatus } = demo;
+  const { appointmentStatus, intakeSubmission, statement } = demo;
   const canBook = ["none", "cancelled", "completed", "no-show"].includes(appointmentStatus);
   const intakeDue = intakeSubmission === null &&
     ACTIVE_APPOINTMENT_STATUSES.includes(appointmentStatus);
+  const newResults = countNewResults(demo);
+  const refillable = countRefillableMedications(demo);
+  const pendingRefills = countPendingRefills(demo);
+  const statementDue = statement.status === "unpaid";
 
   return <div className="page-content">
     <div className="welcome-row">
@@ -938,7 +1090,10 @@ function PatientHome({ sharedRecord, patientName, demo, busyAction, onBook, onCo
     <div className="section-heading"><div><h2>Your care</h2><p>Every card here reflects your current state.</p></div></div>
       <div className="quick-grid">
         {intakeDue && <QuickCard color="coral" icon="clipboard" title="Pre-visit questions" text="Your care team reads this before the visit" action="Complete form" onClick={onOpenIntake} disabled={busyAction !== null} />}
-        <QuickCard color="mint" icon="pill" title="Request a refill" text={refillStatus === "approved" ? "Refill approved by the clinic" : refillStatus === "pending" ? "Under staff review" : refillStatus === "rejected" ? "The clinic declined the previous request" : "Ask the clinic to renew a medication"} action={refillStatus === "approved" ? "Approved" : refillStatus === "pending" ? "Under review" : refillStatus === "rejected" ? "Request again" : "Request refill"} onClick={onRequestRefill} done={refillStatus === "approved"} disabled={busyAction !== null || refillStatus === "pending" || refillStatus === "approved"} />
+        {newResults > 0 && <QuickCard color="green" icon="flask" title={newResults === 1 ? "1 new lab result" : `${newResults} new lab results`} text="Ready for you to read, with the normal range beside each value" action="Open health record" onClick={() => onGoTo("record")} />}
+        {refillable > 0 && <QuickCard color="mint" icon="pill" title={refillable === 1 ? "1 refill you can request" : `${refillable} refills you can request`} text="Ask the clinic to renew a medication you already take" action="Open medications" onClick={() => onGoTo("medications")} />}
+        {refillable === 0 && pendingRefills > 0 && <QuickCard color="mint" icon="pill" title={pendingRefills === 1 ? "1 refill under review" : `${pendingRefills} refills under review`} text="Clinic staff will decide on these" action="Open medications" onClick={() => onGoTo("medications")} />}
+        {statementDue && <QuickCard color="purple" icon="credit-card" title="A statement is due" text={`${statement.amount} · ${statement.description} · due ${statement.dueOn}`} action="Open health record" onClick={() => onGoTo("record")} />}
         {intakeSubmission !== null && <QuickCard color="blue" icon="clipboard" title="Your answers" text={`Submitted ${intakeSubmission.submittedAt}`} action="Review or update" onClick={onOpenIntake} done disabled={busyAction !== null} />}
       </div>
   </div>;
@@ -995,16 +1150,68 @@ function SharedRecordNotice() {
   </section>;
 }
 
-function HealthRecord({ demo, sharedRecord, onOpenIntake, onOpenInsurance, onOpenLab, onOpenSummary }: {
+/**
+ * Refills are per medication, so this destination exists to name the medication
+ * a request is for. The previous single "Request a refill" tile could not: it
+ * spoke for a whole list it never showed.
+ */
+function PatientMedications({ sharedRecord, demo, busyAction, busyTarget, onRequestRefill }: {
+  sharedRecord: boolean;
+  demo: DemoState;
+  busyAction: DemoStateAction | null;
+  busyTarget: string | null;
+  onRequestRefill: (medicationId: string) => void | Promise<unknown>;
+}) {
+  const { medications } = demo;
+  const refillable = countRefillableMedications(demo);
+  const pending = countPendingRefills(demo);
+
+  return <div className="page-content">
+    <div className="welcome-row"><div><p className="eyebrow">PATIENT PORTAL</p><h1>Medications</h1><p className="subtitle">{refillable === 0 && pending === 0 ? "Nothing needs a refill right now." : refillable > 0 ? `You can request a refill for ${refillable === 1 ? "one medication" : `${refillable} medications`}.` : `${pending === 1 ? "One request is" : `${pending} requests are`} with clinic staff.`}</p></div></div>
+    {sharedRecord && <SharedRecordNotice />}
+    <section className="panel medication-list" aria-label="Medications you take">
+      {medications.map(medication => {
+        const canRequest = medication.refillStatus === "none" ||
+          medication.refillStatus === "rejected";
+        const sending = busyTarget === medication.id &&
+          busyAction === "request-refill";
+        return <article className="medication-row" key={medication.id}>
+          <span className="activity-icon green"><Icon name="pill" size={18} /></span>
+          <div>
+            <h2>{medication.name}</h2>
+            <p>{medication.dose} · {medication.instructions}</p>
+            <small>Last filled {medication.lastFilled}</small>
+          </div>
+          <span className={`review-status ${refillChipTone(medication.refillStatus)}`}>{refillStatusLabel(medication.refillStatus)}</span>
+          <button className="secondary-button" onClick={() => onRequestRefill(medication.id)} disabled={busyAction !== null || !canRequest} aria-label={`Request a refill for ${medication.name}`}>{sending ? "Sending…" : medication.refillStatus === "rejected" ? "Request again" : "Request refill"}</button>
+        </article>;
+      })}
+    </section>
+    <p className="demo-disclaimer">Sample medications · Not a real prescription list</p>
+  </div>;
+}
+
+/** Maps a refill status onto the chip tones the rest of the app already uses. */
+function refillChipTone(status: RefillStatus): string {
+  if (status === "pending") return "pending";
+  if (status === "rejected") return "declined";
+  if (status === "approved") return "";
+  return "neutral";
+}
+
+function HealthRecord({ demo, sharedRecord, busyAction, onOpenIntake, onOpenInsurance, onOpenResult, onPayStatement, onOpenSummary }: {
   demo: DemoState;
   sharedRecord: boolean;
+  busyAction: DemoStateAction | null;
   onOpenIntake: () => void;
   onOpenInsurance: () => void;
-  onOpenLab: () => void;
+  onOpenResult: (resultId: string) => void | Promise<unknown>;
+  onPayStatement: () => void | Promise<unknown>;
   onOpenSummary: () => void;
 }) {
-  const { intakeSubmission, insurance, appointmentStatus } = demo;
+  const { intakeSubmission, insurance, appointmentStatus, results, statement } = demo;
   const intakeAvailable = ACTIVE_APPOINTMENT_STATUSES.includes(appointmentStatus);
+  const paid = statement.status === "paid";
 
   return <div className="page-content">
     <div className="welcome-row"><div><p className="eyebrow">PATIENT PORTAL</p><h1>Health record</h1><p className="subtitle">Forms, coverage, and clinical documents for the shared demo patient.</p></div></div>
@@ -1020,13 +1227,18 @@ function HealthRecord({ demo, sharedRecord, onOpenIntake, onOpenInsurance, onOpe
         <div><p className="eyebrow">COVERAGE</p><h2>Insurance information</h2><p>{insurance.provider} · {insurance.planName}</p><small>Member {insurance.memberId} · Last update: {insurance.updatedAt}</small></div>
         <button className="secondary-button" onClick={onOpenInsurance}>Update insurance</button>
       </article>
-      <article className="panel document-card">
+      {results.map(result => <article className="panel document-card" key={result.id}>
         <span className="activity-icon green"><Icon name="flask" size={18} /></span>
-        <div><p className="eyebrow">LAB RESULT</p><h2>Complete blood count</h2><p>A routine blood test · Collected July 23 · Final</p><span className="review-status">All values in range</span></div>
-        <button className="secondary-button" onClick={onOpenLab}>View result</button>
+        <div><p className="eyebrow">LAB RESULT</p><h2>{result.name}</h2><p>{result.plainName} · Collected {result.collectedAt}</p><span className="chip-row">{result.status === "new" && <span className="review-status pending">New</span>}<span className="review-status">{result.summary}</span></span></div>
+        <button className="secondary-button" onClick={() => onOpenResult(result.id)}>{result.status === "new" ? "Open result" : "View result"}</button>
+      </article>)}
+      <article className="panel document-card">
+        <span className="activity-icon purple"><Icon name="credit-card" size={18} /></span>
+        <div><p className="eyebrow">BILLING</p><h2>{statement.description}</h2><p>{statement.amount} · Due {statement.dueOn}</p><span className={`review-status ${paid ? "" : "pending"}`}>{paid ? "Paid" : "Unpaid"}</span></div>
+        <button className="secondary-button" onClick={onPayStatement} disabled={paid || busyAction !== null}>{paid ? "Paid" : busyAction === "pay-statement" ? "Paying…" : "Pay statement"}</button>
       </article>
       <article className="panel document-card">
-        <span className="activity-icon orange"><Icon name="heart" size={18} /></span>
+        <span className="activity-icon coral"><Icon name="heart" size={18} /></span>
         <div><p className="eyebrow">VISIT DOCUMENT</p><h2>Primary care summary</h2><p>July 12 appointment · Dr. Ana Costa</p><span className="review-status">Available</span></div>
         <button className="secondary-button" onClick={onOpenSummary}>Open summary</button>
       </article>
@@ -1047,7 +1259,7 @@ function StaffToday({ staffName, demo, busyAction, onAdvanceAppointment, onOpenS
   // Close this dialog before the parent opens the summary: two aria-modal
   // dialogs mounted at once means two focus traps and two Escape listeners.
   const openSummary = () => { setActiveModal(null); onOpenSummary(); };
-  const { appointmentStatus, appointmentTime, intakeSubmission, insurance, refillStatus } = demo;
+  const { appointmentStatus, appointmentTime, intakeSubmission } = demo;
 
   const portalAppointment: StaffAppointment = {
     time: formatAppointmentTime(appointmentTime),
@@ -1057,12 +1269,13 @@ function StaffToday({ staffName, demo, busyAction, onAdvanceAppointment, onOpenS
     fromPatientPortal: true,
   };
   const appointmentVisible = appointmentStatus !== "none";
-  const staffAppointments = appointmentVisible
-    ? [...appointments.slice(0, 3), portalAppointment, ...appointments.slice(3)]
-    : appointments;
+  const staffAppointments = (appointmentVisible
+    ? [...appointments, portalAppointment]
+    : [...appointments]
+  ).sort((a, b) => minutesOfDay(a.time) - minutesOfDay(b.time));
   // Counted, not invented — but note the schedule is seeded with four fixture
   // rows (see `appointments`), so "appointments today" cannot read below 4.
-  const pendingRefills = Number(refillStatus === "pending");
+  const pendingRefills = countPendingRefills(demo);
   const formsReceived = Number(intakeSubmission !== null);
   const openRequests = pendingRefills + formsReceived;
   const awaitingArrival = staffAppointments.filter(
@@ -1073,7 +1286,7 @@ function StaffToday({ staffName, demo, busyAction, onAdvanceAppointment, onOpenS
     <div className="welcome-row"><div><p className="eyebrow">CLINIC DASHBOARD</p><h1>Good morning, {staffName}.</h1><p className="subtitle">Track today&apos;s schedule and requests that need attention.</p></div><button className="secondary-button" onClick={() => setActiveModal("patient-search")}><Icon name="search" size={16} /> Search patients</button></div>
     <div className="metric-grid">
       <Metric value={String(staffAppointments.length)} label="Appointments today" detail={awaitingArrival === 1 ? "1 awaiting arrival" : `${awaitingArrival} awaiting arrival`} tone="blue" />
-      <Metric value={String(pendingRefills)} label="Refills to review" detail={pendingRefills === 0 ? "Nothing waiting" : "From the patient portal"} tone="coral" />
+      <Metric value={String(pendingRefills)} label="Refills to review" detail={pendingRefills === 0 ? "Nothing waiting" : pendingRefills === 1 ? "One medication" : `${pendingRefills} medications`} tone="coral" />
       <Metric value={String(formsReceived)} label="Forms received" detail={formsReceived === 0 ? "Nothing waiting" : "From the patient portal"} tone="mint" />
     </div>
     <div className="staff-layout">
@@ -1089,28 +1302,51 @@ function StaffToday({ staffName, demo, busyAction, onAdvanceAppointment, onOpenS
       </div>
     </div>
     {activeModal === "appointment" && <AppointmentReviewModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} appointmentProvider={demo.appointmentProvider} appointmentSpecialty={demo.appointmentSpecialty} busyAction={busyAction} onAdvance={onAdvanceAppointment} onOpenSummary={openSummary} onClose={() => closeModal()} />}
-    {activeModal === "patient-search" && <PatientSearchModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} intakeComplete={intakeSubmission !== null} refillStatus={refillStatus} insurance={insurance} onOpenSummary={openSummary} onClose={() => closeModal()} />}
+    {activeModal === "patient-search" && <PatientSearchModal demo={demo} onOpenSummary={openSummary} onClose={() => closeModal()} />}
   </div>;
 }
 
-function StaffRequests({ demo, busyAction, onApproveRefill, onDeclineRefill }: {
+function StaffRequests({ demo, busyAction, busyTarget, onApproveRefill, onDeclineRefill }: {
   demo: DemoState;
   busyAction: DemoStateAction | null;
-  onApproveRefill: () => void | Promise<unknown>;
-  onDeclineRefill: () => void | Promise<unknown>;
+  busyTarget: string | null;
+  onApproveRefill: (medicationId: string) => void | Promise<unknown>;
+  onDeclineRefill: (medicationId: string) => void | Promise<unknown>;
 }) {
   const [activeModal, setActiveModal] = useState<StaffModal>(null);
   const closeModal = () => setActiveModal(null);
-  const { intakeSubmission, refillStatus } = demo;
-  const isEmpty = refillStatus === "none" && intakeSubmission === null;
+  const { intakeSubmission, medications } = demo;
+  // Split rather than filtered inline: a decided request stays visible so the
+  // person who decided it can see what they did, but it is not still "open".
+  const awaitingDecision = medications.filter(
+    medication => medication.refillStatus === "pending",
+  );
+  const decided = medications.filter(
+    medication => medication.refillStatus === "approved" ||
+      medication.refillStatus === "rejected",
+  );
+  const isEmpty = awaitingDecision.length === 0 && decided.length === 0 &&
+    intakeSubmission === null;
 
   return <div className="page-content">
     <div className="welcome-row"><div><p className="eyebrow">CLINIC DASHBOARD</p><h1>Requests</h1><p className="subtitle">Items submitted from the patient portal that need a decision.</p></div></div>
     <section className="panel request-panel" aria-label="Requests from the patient portal">
       {isEmpty && <p className="empty-note">No open requests. Anything the patient submits appears here.</p>}
-      {refillStatus === "pending" && <div className="request-card highlighted"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · Losartan 50 mg (blood pressure medicine)</small></div><span>Now</span></div><div className="request-actions"><button className="reject" onClick={onDeclineRefill} disabled={busyAction !== null}>{busyAction === "decline-refill" ? "Declining…" : "Decline"}</button><button className="approve" onClick={onApproveRefill} disabled={busyAction !== null}>{busyAction === "approve-refill" ? "Approving…" : "Approve"}</button></div></div>}
-      {refillStatus === "approved" && <div className="request-card"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · Losartan 50 mg (blood pressure medicine)</small></div><span>Reviewed</span></div><p>Request approved · The patient can see the update in the portal.</p></div>}
-      {refillStatus === "rejected" && <div className="request-card"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · Losartan 50 mg (blood pressure medicine)</small></div><span>Reviewed</span></div><p>Request declined · The patient may submit another request.</p></div>}
+      {awaitingDecision.map(medication => {
+        const deciding = busyTarget === medication.id;
+        return <div className="request-card highlighted" key={medication.id}>
+          <div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · {medication.name}</small></div><span>Now</span></div>
+          <p>{medication.instructions} Last filled {medication.lastFilled}.</p>
+          <div className="request-actions">
+            <button className="reject" onClick={() => onDeclineRefill(medication.id)} disabled={busyAction !== null} aria-label={`Decline the refill for ${medication.name}`}>{deciding && busyAction === "decline-refill" ? "Declining…" : "Decline"}</button>
+            <button className="approve" onClick={() => onApproveRefill(medication.id)} disabled={busyAction !== null} aria-label={`Approve the refill for ${medication.name}`}>{deciding && busyAction === "approve-refill" ? "Approving…" : "Approve"}</button>
+          </div>
+        </div>;
+      })}
+      {decided.map(medication => <div className="request-card" key={medication.id}>
+        <div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · {medication.name}</small></div><span>Reviewed</span></div>
+        <p>{medication.refillStatus === "approved" ? "Request approved · The patient can see the update in the portal." : "Request declined · The patient may submit another request."}</p>
+      </div>)}
       {intakeSubmission !== null && <div className="request-card highlighted" aria-label="Maria Lopez submitted intake form"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Pre-visit questions · Patient portal</small></div><span>Now</span></div><p>Submitted {intakeSubmission.submittedAt}.</p><button className="text-action" onClick={() => setActiveModal("intake-review")}>Review form <Icon name="arrow-right" size={13} /></button></div>}
     </section>
     {activeModal === "intake-review" && intakeSubmission && <IntakeReviewModal intakeSubmission={intakeSubmission} onClose={() => closeModal()} />}
@@ -1143,13 +1379,17 @@ function AppointmentReviewModal({ appointmentStatus, appointmentTime, appointmen
   return <Modal labelledBy="appointment-review-title" dismissOnBackdrop onClose={onClose}><p className="eyebrow">PATIENT PORTAL BOOKING</p><h2 id="appointment-review-title">Appointment details</h2><p>This appointment was booked by Maria Lopez and is part of the shared clinic schedule.</p><dl className="review-details"><div><dt>Patient</dt><dd>Maria Lopez</dd></div><div><dt>Date and time</dt><dd>July 24 · {formatAppointmentTime(appointmentTime)}</dd></div><div><dt>Provider</dt><dd>{appointmentProvider ?? "Dr. Ana Costa"}</dd></div><div><dt>Visit type</dt><dd>{(appointmentSpecialty ?? "Primary Care")} · Follow-up</dd></div><div><dt>Status</dt><dd><span className="review-status">{appointmentStatusLabel(appointmentStatus)}</span></dd></div></dl>{nextAction && <button className="primary-button full" disabled={busyAction !== null} onClick={() => void onAdvance(nextAction.action)}>{busyAction === nextAction.action ? "Saving…" : nextAction.label}</button>}{canMarkNoShow && <div className="modal-danger-zone"><strong>Patient did not arrive?</strong><button className="danger-button full" disabled={busyAction !== null} onClick={() => void onAdvance("no-show-appointment")}>{busyAction === "no-show-appointment" ? "Saving…" : "Mark as did not attend"}</button></div>}<button className="secondary-button full" onClick={onOpenSummary}>Open visit summary</button><button className="secondary-button full" onClick={onClose}>Close</button></Modal>;
 }
 
-function PatientSearchModal({ appointmentStatus, appointmentTime, intakeComplete, refillStatus, insurance, onOpenSummary, onClose }: { appointmentStatus: AppointmentStatus; appointmentTime: AppointmentTime; intakeComplete: boolean; refillStatus: RefillStatus; insurance: InsuranceInfo; onOpenSummary: () => void; onClose: () => void }) {
+function PatientSearchModal({ demo, onOpenSummary, onClose }: { demo: DemoState; onOpenSummary: () => void; onClose: () => void }) {
+  const { appointmentStatus, appointmentTime, intakeSubmission, insurance, statement } = demo;
+  const intakeComplete = intakeSubmission !== null;
+  const pendingRefills = countPendingRefills(demo);
+  const newResults = countNewResults(demo);
   const [query, setQuery] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<PatientProfile | null>(null);
   const results = patientProfiles.filter(patient =>
     patient.name.toLowerCase().includes(query.trim().toLowerCase()),
   );
-  return <Modal labelledBy="patient-search-title" className="patient-search-modal" onClose={onClose}>{selectedPatient ? <><button className="auth-back" type="button" onClick={() => setSelectedPatient(null)}><Icon name="arrow-left" size={14} /> Back to results</button><p className="eyebrow">PATIENT PROFILE</p><div className="patient-profile-heading"><span className="patient-avatar">{selectedPatient.initials}</span><div><h2 id="patient-search-title">{selectedPatient.name}</h2><p>{selectedPatient.email}</p></div></div><dl className="review-details"><div><dt>Date of birth</dt><dd>{selectedPatient.dateOfBirth}</dd></div><div><dt>Last visit</dt><dd>{selectedPatient.lastVisit}</dd></div>{selectedPatient.name === "Maria Lopez" && <><div><dt>Appointment</dt><dd>{appointmentStatusLabel(appointmentStatus)}{appointmentStatus !== "none" ? ` · ${formatAppointmentTime(appointmentTime)}` : ""}</dd></div><div><dt>Intake</dt><dd>{intakeComplete ? "Submitted" : "Not submitted"}</dd></div><div><dt>Refill</dt><dd>{refillStatusLabel(refillStatus)}</dd></div><div><dt>Insurance</dt><dd>{insurance.provider} · {insurance.planName}</dd></div></>}</dl>{selectedPatient.name === "Maria Lopez" && <button className="secondary-button full" onClick={onOpenSummary}>Open visit summary</button>}<p className="demo-disclaimer">Sample data · Not a real patient</p></> : <><p className="eyebrow">PATIENT DIRECTORY</p><h2 id="patient-search-title">Search patients</h2><p>Find one of the five sample patients by name.</p><label className="patient-search-input"><span>Patient name</span><div><Icon name="search" size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search by name" /></div></label><div className="patient-results" aria-live="polite">{results.map(patient => <button key={patient.email} onClick={() => setSelectedPatient(patient)}><span className="patient-avatar">{patient.initials}</span><span><strong>{patient.name}</strong><small>{patient.email}</small></span><Icon name="arrow-right" size={15} /></button>)}{results.length === 0 && <p>No patients found.</p>}</div></>} </Modal>;
+  return <Modal labelledBy="patient-search-title" className="patient-search-modal" onClose={onClose}>{selectedPatient ? <><button className="auth-back" type="button" onClick={() => setSelectedPatient(null)}><Icon name="arrow-left" size={14} /> Back to results</button><p className="eyebrow">PATIENT PROFILE</p><div className="patient-profile-heading"><span className="patient-avatar">{selectedPatient.initials}</span><div><h2 id="patient-search-title">{selectedPatient.name}</h2><p>{selectedPatient.email}</p></div></div><dl className="review-details"><div><dt>Date of birth</dt><dd>{selectedPatient.dateOfBirth}</dd></div><div><dt>Last visit</dt><dd>{selectedPatient.lastVisit}</dd></div>{selectedPatient.name === "Maria Lopez" && <><div><dt>Appointment</dt><dd>{appointmentStatusLabel(appointmentStatus)}{appointmentStatus !== "none" ? ` · ${formatAppointmentTime(appointmentTime)}` : ""}</dd></div><div><dt>Intake</dt><dd>{intakeComplete ? "Submitted" : "Not submitted"}</dd></div><div><dt>Refills</dt><dd>{pendingRefills === 0 ? "Nothing under review" : pendingRefills === 1 ? "1 waiting on a decision" : `${pendingRefills} waiting on a decision`}</dd></div><div><dt>Results</dt><dd>{newResults === 0 ? "All read by the patient" : newResults === 1 ? "1 not yet read" : `${newResults} not yet read`}</dd></div><div><dt>Billing</dt><dd>{statement.amount} · {statement.status === "paid" ? "Paid" : `Due ${statement.dueOn}`}</dd></div><div><dt>Insurance</dt><dd>{insurance.provider} · {insurance.planName}</dd></div></>}</dl>{selectedPatient.name === "Maria Lopez" && <button className="secondary-button full" onClick={onOpenSummary}>Open visit summary</button>}<p className="demo-disclaimer">Sample data · Not a real patient</p></> : <><p className="eyebrow">PATIENT DIRECTORY</p><h2 id="patient-search-title">Search patients</h2><p>Find one of the five sample patients by name.</p><label className="patient-search-input"><span>Patient name</span><div><Icon name="search" size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search by name" /></div></label><div className="patient-results" aria-live="polite">{results.map(patient => <button key={patient.email} onClick={() => setSelectedPatient(patient)}><span className="patient-avatar">{patient.initials}</span><span><strong>{patient.name}</strong><small>{patient.email}</small></span><Icon name="arrow-right" size={15} /></button>)}{results.length === 0 && <p>No patients found.</p>}</div></>} </Modal>;
 }
 
 function InsuranceModal({ insurance, busy, onClose, onSubmit }: {
@@ -1180,8 +1420,14 @@ function InsuranceModal({ insurance, busy, onClose, onSubmit }: {
   return <Modal confirmDiscard labelledBy="insurance-title" closeDisabled={busy} onClose={onClose}><p className="eyebrow">COVERAGE DETAILS</p><h2 id="insurance-title">Update insurance</h2><p>Use fictional coverage information for this demonstration.</p><form onSubmit={submit} noValidate><label>Insurance provider<input name="provider" maxLength={80} defaultValue={insurance.provider} {...fieldProps("provider", errors)} /></label><FieldError name="provider" errors={errors} /><label>Plan name<input name="planName" maxLength={80} defaultValue={insurance.planName} {...fieldProps("planName", errors)} /></label><FieldError name="planName" errors={errors} /><label>Member ID<input name="memberId" maxLength={40} defaultValue={insurance.memberId} {...fieldProps("memberId", errors)} /></label><FieldError name="memberId" errors={errors} /><p className="form-hint">All fields are required. Do not enter real policy information.</p><button className="primary-button full" type="submit" disabled={busy}>{busy ? "Saving…" : "Save insurance"}</button></form></Modal>;
 }
 
-function LabResultModal({ onClose }: { onClose: () => void }) {
-  return <Modal labelledBy="lab-result-title" className="clinical-modal" dismissOnBackdrop onClose={onClose}><p className="eyebrow">FINAL RESULT</p><h2 id="lab-result-title">Complete blood count</h2><p>A routine blood test measuring red cells, white cells, and platelets · Collected July 23, 2026 at 8:15 AM · Ordered by Dr. Ana Costa</p><table className="lab-table"><caption>Complete blood count values</caption><thead><tr><th scope="col">Test</th><th scope="col">Result</th><th scope="col">Normal range</th></tr></thead><tbody>{[["Hemoglobin", "13.6 g/dL", "12.0–15.5"], ["White blood cells", "6.4 K/uL", "4.5–11.0"], ["Platelets", "248 K/uL", "150–450"]].map(([test, result, range]) => <tr key={test}><th scope="row">{test}</th><td><b>{result}</b></td><td>{range}</td></tr>)}</tbody></table><p className="demo-disclaimer">All values are fictional and provided only for QA training.</p><button className="primary-button full" onClick={onClose}>Done</button></Modal>;
+function LabResultModal({ result, onClose }: { result: LabResult | null; onClose: () => void }) {
+  // Reachable: the shared demo environment resets on a timer, so the result a
+  // second tab is reading can stop existing while the dialog is open. Saying so
+  // beats rendering an empty table.
+  if (!result) {
+    return <Modal labelledBy="lab-result-title" className="clinical-modal" dismissOnBackdrop onClose={onClose}><h2 id="lab-result-title">Result no longer on file</h2><p>The shared demo environment was reset while this was open. Close this and open the result again.</p><button className="primary-button full" onClick={onClose}>Close</button></Modal>;
+  }
+  return <Modal labelledBy="lab-result-title" className="clinical-modal" dismissOnBackdrop onClose={onClose}><p className="eyebrow">FINAL RESULT</p><h2 id="lab-result-title">{result.name}</h2><p>{result.plainName} · Collected {result.collectedAt} · Ordered by Dr. Ana Costa</p><table className="lab-table"><caption>{result.name} values</caption><thead><tr><th scope="col">Test</th><th scope="col">Result</th><th scope="col">Normal range</th></tr></thead><tbody>{result.values.map(value => <tr key={value.test}><th scope="row">{value.test}</th><td><b>{value.result}</b></td><td>{value.range}</td></tr>)}</tbody></table><p className="review-status">{result.summary}</p><p className="demo-disclaimer">All values are fictional and provided only for QA training.</p><button className="primary-button full" onClick={onClose}>Done</button></Modal>;
 }
 
 function downloadVisitSummary() {

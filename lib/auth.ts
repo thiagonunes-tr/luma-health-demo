@@ -47,7 +47,7 @@ const accounts: DemoAccount[] = [
   },
   {
     email: "employee.demo@testrigor-mail.com",
-    name: "Thiago Nunes",
+    name: "Daniel Reyes",
     role: "staff",
     passwordHash:
       "d9e28261b705c539ea1678e9cd14d76d476a680ce6245a49e272ac8c0fd84f76",

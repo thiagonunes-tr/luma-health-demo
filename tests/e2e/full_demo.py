@@ -58,10 +58,20 @@ def audit_accessibility(page: Page, surface: str) -> None:
     context={"exclude": [[".api-docs-console"]]},
     options={
       "runOnly": {"type": "rule", "values": AXE_RULES},
-      "resultTypes": ["violations"],
+      # "incomplete" matters as much as "violations": axe declines to judge
+      # contrast when it cannot resolve the background, which is exactly what a
+      # gradient does. Ignoring it once reported a fully unreadable hero card as
+      # clean. Anything axe cannot judge is asserted by measure_contrast below.
+      "resultTypes": ["violations", "incomplete"],
     },
   )
   violations = results.response.get("violations", [])
+  undetermined = [
+    node["target"]
+    for entry in results.response.get("incomplete", [])
+    if entry["id"] == "color-contrast"
+    for node in entry["nodes"]
+  ]
   if violations:
     lines = []
     for violation in violations:
@@ -71,7 +81,82 @@ def audit_accessibility(page: Page, surface: str) -> None:
         lines.append(f"    at {target}")
     detail = "\n".join(lines)
     raise AssertionError(f"axe violations on {surface}:\n{detail}")
-  print(f"  axe clean: {surface}")
+  for target in undetermined:
+    measure_contrast(page, target[0] if isinstance(target, list) else target, surface)
+  suffix = f" ({len(undetermined)} gradient nodes measured directly)" if undetermined else ""
+  print(f"  axe clean: {surface}{suffix}")
+
+
+MIN_CONTRAST = 4.5
+
+
+def _relative_luminance(rgb: tuple[float, float, float]) -> float:
+  channels = []
+  for raw in rgb:
+    c = raw / 255
+    channels.append(c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4)
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def measure_contrast(page: Page, selector: str, surface: str) -> None:
+  """Assert contrast for a node axe could not judge.
+
+  Samples every gradient stop behind the text. Translucent stops are composited
+  over each opaque stop rather than treated as solid, because a radial highlight
+  at 24% alpha is not its own colour - reading it as opaque produced a false
+  failure on the auth gradient.
+  """
+  sample = page.evaluate(
+    r"""(selector) => {
+      const node = document.querySelector(selector);
+      if (!node) return null;
+      const parse = (value) => {
+        const parts = value.match(/[\d.]+/g).map(Number);
+        return { rgb: parts.slice(0, 3), alpha: parts.length > 3 ? parts[3] : 1 };
+      };
+      let el = node, stops = null;
+      while (el && !stops) {
+        const style = getComputedStyle(el);
+        if (style.backgroundImage !== "none") {
+          const found = (style.backgroundImage.match(/rgba?\([^)]*\)/g) || [])
+            .map(parse)
+            .filter(s => s.alpha > 0);
+          if (found.length) stops = found;
+        } else if (style.backgroundColor && !/rgba\(0, 0, 0, 0\)/.test(style.backgroundColor)) {
+          stops = [parse(style.backgroundColor)];
+        }
+        el = el.parentElement;
+      }
+      return stops ? { color: parse(getComputedStyle(node).color).rgb, stops } : null;
+    }""",
+    selector,
+  )
+  if sample is None:
+    return
+
+  opaque = [s["rgb"] for s in sample["stops"] if s["alpha"] >= 1]
+  translucent = [s for s in sample["stops"] if s["alpha"] < 1]
+  if not opaque:
+    return
+
+  candidates = list(opaque)
+  for stop in translucent:
+    for base in opaque:
+      candidates.append([
+        stop["alpha"] * stop["rgb"][i] + (1 - stop["alpha"]) * base[i]
+        for i in range(3)
+      ])
+
+  foreground = _relative_luminance(sample["color"])
+  for background_rgb in candidates:
+    background = _relative_luminance(background_rgb)
+    lighter, darker = max(foreground, background), min(foreground, background)
+    ratio = (lighter + 0.05) / (darker + 0.05)
+    assert ratio >= MIN_CONTRAST, (
+      f"contrast {ratio:.2f}:1 on {surface} at {selector} (text "
+      f"{sample['color']} on background {[round(c) for c in background_rgb]}); "
+      f"needs {MIN_CONTRAST}:1"
+    )
 
 
 def wait_for_server(process: subprocess.Popen, timeout_seconds: int = 60) -> None:
@@ -100,13 +185,14 @@ def sign_in(page: Page, role: str, email: str, password: str) -> None:
   page.get_by_role(
     "button", name="Sign in without two-factor authentication"
   ).click()
-  heading = "Good morning, Thiago." if role == "staff" else "Hello, Maria."
+  heading = "Good morning, Daniel." if role == "staff" else "Hello, Maria."
   page.get_by_role("heading", name=heading).wait_for()
 
 
 def sign_out(page: Page) -> None:
-  # The sidebar row opens Account settings; sign-out is a labelled button inside.
-  page.locator(".sidebar-user").click()
+  # One account control, in the topbar: it is the only one present on phones,
+  # where the sidebar is hidden. Sign-out is a labelled button inside the dialog.
+  page.get_by_role("button", name="Account settings").click()
   page.get_by_role("dialog", name="Account settings").get_by_role(
     "button", name="Sign out"
   ).click()
@@ -200,9 +286,40 @@ def run_scenario(page: Page) -> None:
 
   forbidden = page.request.patch(
     f"{BASE_URL}/api/demo-state",
-    data={"action": "approve-refill"},
+    data={"action": "approve-refill", "medicationId": "med-losartan"},
   )
   assert forbidden.status == 403
+
+  # Refills are per medication, so an unaddressed request is malformed (400),
+  # and an id that is not on file is malformed too.
+  unaddressed_refill = page.request.patch(
+    f"{BASE_URL}/api/demo-state",
+    data={"action": "request-refill"},
+  )
+  assert unaddressed_refill.status == 400
+  unknown_medication = page.request.patch(
+    f"{BASE_URL}/api/demo-state",
+    data={"action": "request-refill", "medicationId": "med-nope"},
+  )
+  assert unknown_medication.status == 400
+  unknown_result = page.request.patch(
+    f"{BASE_URL}/api/demo-state",
+    data={"action": "acknowledge-result", "resultId": "result-nope"},
+  )
+  assert unknown_result.status == 400
+  # A statement pays once. The second attempt is out of sequence, not malformed.
+  first_payment = page.request.patch(
+    f"{BASE_URL}/api/demo-state",
+    data={"action": "pay-statement"},
+  )
+  assert first_payment.status == 200
+  paid_twice = page.request.patch(
+    f"{BASE_URL}/api/demo-state",
+    data={"action": "pay-statement"},
+  )
+  assert paid_twice.status == 409
+  # Put the statement back so the UI walkthrough below still has one to pay.
+  assert page.request.delete(f"{BASE_URL}/api/demo-state").status == 200
 
   # Pre-visit questions are bound to a visit: with no appointment this is a 409.
   intake_without_visit = page.request.patch(
@@ -267,9 +384,20 @@ def run_scenario(page: Page) -> None:
   page.get_by_role("button", name="Save insurance").click()
   page.get_by_text("Insurance updated", exact=True).wait_for()
 
-  sidebar(page, "Home")
-  page.get_by_role("button", name="Request a refill").click()
+  # Refills live on their own destination now, because the request has to name
+  # the medication it is for.
+  sidebar(page, "Medications")
+  audit_accessibility(page, "patient · medications")
+  page.get_by_label("Request a refill for Losartan 50 mg").click()
   page.get_by_text("Request submitted", exact=True).wait_for()
+  losartan = page.locator(".medication-row").filter(has_text="Losartan 50 mg")
+  losartan.get_by_text("Awaiting review", exact=True).wait_for()
+  # The other two medications must be untouched: one global refill field used to
+  # make every medication share one outcome.
+  metformin = page.locator(".medication-row").filter(has_text="Metformin 500 mg")
+  metformin.get_by_text("No request", exact=True).wait_for()
+  assert page.get_by_label("Request a refill for Metformin 500 mg").is_enabled()
+  assert not page.get_by_label("Request a refill for Losartan 50 mg").is_enabled()
 
   sidebar(page, "Messages")
   page.get_by_label("Reply to your care team").fill(
@@ -282,12 +410,37 @@ def run_scenario(page: Page) -> None:
 
   sidebar(page, "Health record")
   audit_accessibility(page, "patient · health record")
-  page.get_by_role("button", name="View result").click()
+  # Both results start unread, and each card carries its own New marker.
+  cbc = page.locator(".document-card").filter(has_text="Complete blood count")
+  lipids = page.locator(".document-card").filter(has_text="Lipid panel")
+  cbc.get_by_text("New", exact=True).wait_for()
+  lipids.get_by_text("New", exact=True).wait_for()
+
+  cbc.get_by_role("button", name="Open result").click()
   page.get_by_text("13.6 g/dL", exact=True).wait_for()
   page.get_by_text("6.4 K/uL", exact=True).wait_for()
   page.get_by_text("248 K/uL", exact=True).wait_for()
   audit_accessibility(page, "patient · lab result dialog")
   page.get_by_role("button", name="Done").click()
+
+  # Opening it was the acknowledgement: that card loses New, the other keeps it.
+  cbc.get_by_role("button", name="View result").wait_for()
+  assert cbc.get_by_text("New", exact=True).count() == 0
+  lipids.get_by_text("New", exact=True).wait_for()
+
+  # The second result carries different values, so a hardcoded table would show.
+  lipids.get_by_role("button", name="Open result").click()
+  page.get_by_text("212 mg/dL", exact=True).wait_for()
+  page.get_by_text("One value above range", exact=True).first.wait_for()
+  page.get_by_role("button", name="Done").click()
+
+  # Billing sits in the health record, and pays exactly once.
+  billing = page.locator(".document-card").filter(has_text="Primary care follow-up")
+  billing.get_by_text("Unpaid", exact=True).wait_for()
+  billing.get_by_role("button", name="Pay statement").click()
+  page.get_by_text("Statement paid", exact=True).wait_for()
+  billing.get_by_text("Paid", exact=True).first.wait_for()
+  assert not billing.get_by_role("button", name="Paid").is_enabled()
   page.get_by_role("button", name="Open summary").click()
   download_summary(page)
   page.locator(".clinical-modal").get_by_role(
@@ -345,11 +498,21 @@ def run_scenario(page: Page) -> None:
   ).wait_for()
 
   sidebar(page, "Requests")
-  page.get_by_role("button", name="Approve").click()
+  page.get_by_label("Approve the refill for Losartan 50 mg").click()
   page.get_by_text("Refill approved", exact=True).wait_for()
 
   sidebar(page, "Today")
   audit_accessibility(page, "staff · today")
+
+  # The portal appointment used to be spliced into the schedule at a fixed
+  # index, so a 9:00 AM visit rendered after the 10:00 AM one.
+  times = page.locator(".schedule-row > strong").all_inner_texts()
+  minutes = []
+  for label in times:
+    hour, rest = label.strip().split(":")
+    minute, meridiem = rest.split()
+    minutes.append((int(hour) % 12 + (12 if meridiem.upper() == "PM" else 0)) * 60 + int(minute))
+  assert minutes == sorted(minutes), f"clinic schedule is out of order: {times}"
   page.get_by_label("Review Maria Lopez's new appointment").click()
   page.get_by_role("button", name="Start visit").click()
   page.get_by_role("button", name="Complete visit").click()
@@ -369,7 +532,7 @@ def run_scenario(page: Page) -> None:
   # branch for. Assert the staff landing page survives a reload.
   page.reload()
   page.wait_for_load_state("networkidle")
-  page.get_by_role("heading", name="Good morning, Thiago.").wait_for()
+  page.get_by_role("heading", name="Good morning, Daniel.").wait_for()
   assert page.locator("main#main-content").inner_text().strip() != ""
 
   sign_out(page)
@@ -380,7 +543,14 @@ def run_scenario(page: Page) -> None:
     "PatientDemo!2026",
   )
   page.get_by_role("heading", name="Visit completed").wait_for()
-  page.get_by_text("Refill approved by the clinic", exact=True).wait_for()
+  sidebar(page, "Medications")
+  page.locator(".medication-row").filter(
+    has_text="Losartan 50 mg"
+  ).get_by_text("Approved", exact=True).wait_for()
+  page.locator(".medication-row").filter(
+    has_text="Metformin 500 mg"
+  ).get_by_text("No request", exact=True).wait_for()
+  sidebar(page, "Home")
   # The unread badge counts messages from the other role, not the thread length.
   page.locator(".sidebar").get_by_role("button", name="Messages 1").wait_for()
   sidebar(page, "Messages")
@@ -396,9 +566,15 @@ def run_scenario(page: Page) -> None:
   assert state["appointmentSpecialty"] is None
   assert state["lastRead"] == {"patient": None, "staff": None}
   assert state["intakeSubmission"] is None
-  assert state["refillStatus"] == "none"
   assert len(state["messages"]) == 2
   assert state["insurance"]["memberId"] == "HF-2048"
+  assert [med["refillStatus"] for med in state["medications"]] == ["none"] * 3
+  assert [result["status"] for result in state["results"]] == ["new", "new"]
+  assert state["statement"]["status"] == "unpaid"
+  # The three fields the contract dropped must not come back through D1: an old
+  # row still carries them, and getDemoState reads them without echoing them.
+  for dropped in ("refillStatus", "appointmentBooked", "intakeComplete"):
+    assert dropped not in state, f"{dropped} is back in the API response"
 
 
 def main() -> None:

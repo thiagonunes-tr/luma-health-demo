@@ -632,6 +632,110 @@
         "type": "string",
         "enum": ["none", "pending", "approved", "rejected"]
       },
+      "LabResultStatus": {
+        "type": "string",
+        "enum": ["new", "viewed"]
+      },
+      "StatementStatus": {
+        "type": "string",
+        "enum": ["unpaid", "paid"]
+      },
+      "Medication": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "dose", "instructions", "lastFilled", "refillStatus"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "dose": {
+            "type": "string"
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "lastFilled": {
+            "type": "string"
+          },
+          "refillStatus": {
+            "$ref": "#/components/schemas/RefillStatus"
+          }
+        }
+      },
+      "LabResultValue": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["test", "result", "range"],
+        "properties": {
+          "test": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string"
+          },
+          "range": {
+            "type": "string"
+          }
+        }
+      },
+      "LabResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "plainName", "collectedAt", "summary", "status", "values"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "plainName": {
+            "type": "string",
+            "description": "The same test in words a patient can read."
+          },
+          "collectedAt": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LabResultStatus"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LabResultValue"
+            }
+          }
+        }
+      },
+      "Statement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "description", "amount", "dueOn", "status"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "string",
+            "description": "Formatted for display. This demo does no arithmetic on money."
+          },
+          "dueOn": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StatementStatus"
+          }
+        }
+      },
       "IntakeInput": {
         "type": "object",
         "additionalProperties": false,
@@ -735,7 +839,7 @@
       "DemoState": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["appointmentStatus", "appointmentTime", "appointmentProvider", "appointmentSpecialty", "intakeSubmission", "refillStatus", "messages", "lastRead", "insurance"],
+        "required": ["appointmentStatus", "appointmentTime", "appointmentProvider", "appointmentSpecialty", "intakeSubmission", "messages", "lastRead", "insurance", "medications", "results", "statement"],
         "properties": {
           "appointmentStatus": {
             "$ref": "#/components/schemas/AppointmentStatus"
@@ -759,9 +863,6 @@
               }
             ]
           },
-          "refillStatus": {
-            "$ref": "#/components/schemas/RefillStatus"
-          },
           "messages": {
             "type": "array",
             "items": {
@@ -773,6 +874,21 @@
           },
           "insurance": {
             "$ref": "#/components/schemas/Insurance"
+          },
+          "medications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Medication"
+            }
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LabResult"
+            }
+          },
+          "statement": {
+            "$ref": "#/components/schemas/Statement"
           }
         }
       },
@@ -809,7 +925,9 @@
               "update-insurance",
               "request-refill",
               "approve-refill",
-              "decline-refill"
+              "decline-refill",
+              "acknowledge-result",
+              "pay-statement"
             ]
           },
           "appointmentTime": {
@@ -831,6 +949,14 @@
           },
           "insurance": {
             "$ref": "#/components/schemas/InsuranceInput"
+          },
+          "medicationId": {
+            "type": "string",
+            "description": "Required by request-refill, approve-refill and decline-refill. Refills are per medication, so an unaddressed request is a 400."
+          },
+          "resultId": {
+            "type": "string",
+            "description": "Required by acknowledge-result."
           }
         }
       },

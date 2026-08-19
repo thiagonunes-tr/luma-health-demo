@@ -1,5 +1,41 @@
 export type DemoActorRole = "patient" | "staff";
 export type RefillStatus = "none" | "pending" | "approved" | "rejected";
+
+/**
+ * A medication the patient can request a refill for. The previous model held one
+ * global refill status with no medication attached, so the staff card had to name
+ * a drug that no field carried.
+ */
+export type Medication = {
+  id: string;
+  name: string;
+  dose: string;
+  instructions: string;
+  lastFilled: string;
+  refillStatus: RefillStatus;
+};
+
+/** A lab result with a read lifecycle, so "new result" is observable state. */
+export type LabResultStatus = "new" | "viewed";
+export type LabResult = {
+  id: string;
+  name: string;
+  plainName: string;
+  collectedAt: string;
+  summary: string;
+  status: LabResultStatus;
+  values: { test: string; result: string; range: string }[];
+};
+
+/** A fictional statement. Amounts are demo data and no money moves. */
+export type StatementStatus = "unpaid" | "paid";
+export type Statement = {
+  id: string;
+  description: string;
+  amount: string;
+  dueOn: string;
+  status: StatementStatus;
+};
 export type AppointmentStatus =
   | "none"
   | "scheduled"
@@ -63,10 +99,12 @@ export type DemoState = {
   appointmentProvider: AppointmentProvider | null;
   appointmentSpecialty: AppointmentSpecialty | null;
   intakeSubmission: IntakeSubmission | null;
-  refillStatus: RefillStatus;
   messages: DemoMessage[];
   lastRead: MessageReadState;
   insurance: InsuranceInfo;
+  medications: Medication[];
+  results: LabResult[];
+  statement: Statement;
 };
 
 export type DemoStateAction =
@@ -85,7 +123,9 @@ export type DemoStateAction =
   | "update-insurance"
   | "request-refill"
   | "approve-refill"
-  | "decline-refill";
+  | "decline-refill"
+  | "acknowledge-result"
+  | "pay-statement";
 
 export type DemoActionInput = {
   appointmentTime?: unknown;
@@ -94,6 +134,8 @@ export type DemoActionInput = {
   intake?: unknown;
   messageBody?: unknown;
   insurance?: unknown;
+  medicationId?: unknown;
+  resultId?: unknown;
 };
 
 export type DemoTransitionResult =
@@ -126,6 +168,70 @@ export const DEFAULT_MESSAGES: DemoMessage[] = [
   },
 ];
 
+export const DEFAULT_MEDICATIONS: Medication[] = [
+  {
+    id: "med-losartan",
+    name: "Losartan 50 mg",
+    dose: "One tablet each morning",
+    instructions: "Blood pressure medicine. Take with water.",
+    lastFilled: "June 24, 2026",
+    refillStatus: "none",
+  },
+  {
+    id: "med-metformin",
+    name: "Metformin 500 mg",
+    dose: "One tablet twice a day",
+    instructions: "Blood sugar medicine. Take with food.",
+    lastFilled: "July 2, 2026",
+    refillStatus: "none",
+  },
+  {
+    id: "med-atorvastatin",
+    name: "Atorvastatin 20 mg",
+    dose: "One tablet at night",
+    instructions: "Cholesterol medicine.",
+    lastFilled: "May 30, 2026",
+    refillStatus: "none",
+  },
+];
+
+export const DEFAULT_RESULTS: LabResult[] = [
+  {
+    id: "result-cbc",
+    name: "Complete blood count",
+    plainName: "A routine blood test measuring red cells, white cells and platelets",
+    collectedAt: "July 23, 2026 at 8:15 AM",
+    summary: "All values in range",
+    status: "new",
+    values: [
+      { test: "Hemoglobin", result: "13.6 g/dL", range: "12.0–15.5" },
+      { test: "White blood cells", result: "6.4 K/uL", range: "4.5–11.0" },
+      { test: "Platelets", result: "248 K/uL", range: "150–450" },
+    ],
+  },
+  {
+    id: "result-lipids",
+    name: "Lipid panel",
+    plainName: "A blood test measuring cholesterol and related fats",
+    collectedAt: "July 23, 2026 at 8:15 AM",
+    summary: "One value above range",
+    status: "new",
+    values: [
+      { test: "Total cholesterol", result: "212 mg/dL", range: "under 200" },
+      { test: "HDL", result: "58 mg/dL", range: "over 40" },
+      { test: "Triglycerides", result: "129 mg/dL", range: "under 150" },
+    ],
+  },
+];
+
+export const DEFAULT_STATEMENT: Statement = {
+  id: "statement-jul",
+  description: "Primary care follow-up · July 12, 2026",
+  amount: "$40.00",
+  dueOn: "August 12, 2026",
+  status: "unpaid",
+};
+
 export const DEFAULT_INSURANCE: InsuranceInfo = {
   provider: "HealthFirst Demo",
   planName: "Silver Care",
@@ -144,10 +250,12 @@ export const DEFAULT_DEMO_STATE: DemoState = {
   appointmentProvider: null,
   appointmentSpecialty: null,
   intakeSubmission: null,
-  refillStatus: "none",
   messages: DEFAULT_MESSAGES,
   lastRead: DEFAULT_LAST_READ,
   insurance: DEFAULT_INSURANCE,
+  medications: DEFAULT_MEDICATIONS,
+  results: DEFAULT_RESULTS,
+  statement: DEFAULT_STATEMENT,
 };
 
 export const DEMO_STATE_ACTIONS: DemoStateAction[] = [
@@ -167,6 +275,8 @@ export const DEMO_STATE_ACTIONS: DemoStateAction[] = [
   "request-refill",
   "approve-refill",
   "decline-refill",
+  "acknowledge-result",
+  "pay-statement",
 ];
 
 export function isDemoStateAction(value: unknown): value is DemoStateAction {
@@ -244,6 +354,74 @@ export function isDemoMessage(value: unknown): value is DemoMessage {
   );
 }
 
+export function isRefillStatus(value: unknown): value is RefillStatus {
+  return ["none", "pending", "approved", "rejected"].includes(String(value));
+}
+
+export function isMedication(value: unknown): value is Medication {
+  if (!value || typeof value !== "object") return false;
+  const med = value as Partial<Medication>;
+  return (
+    isRequiredText(med.id, 60) &&
+    isRequiredText(med.name, 80) &&
+    isRequiredText(med.dose, 120) &&
+    isRequiredText(med.instructions, 200) &&
+    typeof med.lastFilled === "string" &&
+    isRefillStatus(med.refillStatus)
+  );
+}
+
+export function isLabResult(value: unknown): value is LabResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Partial<LabResult>;
+  return (
+    isRequiredText(result.id, 60) &&
+    isRequiredText(result.name, 80) &&
+    isRequiredText(result.plainName, 200) &&
+    typeof result.collectedAt === "string" &&
+    typeof result.summary === "string" &&
+    ["new", "viewed"].includes(String(result.status)) &&
+    Array.isArray(result.values) &&
+    result.values.every(
+      row =>
+        !!row &&
+        typeof row === "object" &&
+        isRequiredText((row as { test?: unknown }).test, 80) &&
+        isRequiredText((row as { result?: unknown }).result, 40) &&
+        isRequiredText((row as { range?: unknown }).range, 40),
+    )
+  );
+}
+
+export function isStatement(value: unknown): value is Statement {
+  if (!value || typeof value !== "object") return false;
+  const statement = value as Partial<Statement>;
+  return (
+    isRequiredText(statement.id, 60) &&
+    isRequiredText(statement.description, 200) &&
+    isRequiredText(statement.amount, 20) &&
+    typeof statement.dueOn === "string" &&
+    ["unpaid", "paid"].includes(String(statement.status))
+  );
+}
+
+/** Medications the patient can act on right now. */
+export function countRefillableMedications(state: DemoState): number {
+  return state.medications.filter(
+    med => med.refillStatus === "none" || med.refillStatus === "rejected",
+  ).length;
+}
+
+/** Refills waiting on a clinic decision. */
+export function countPendingRefills(state: DemoState): number {
+  return state.medications.filter(med => med.refillStatus === "pending").length;
+}
+
+/** Results the patient has not opened yet. */
+export function countNewResults(state: DemoState): number {
+  return state.results.filter(result => result.status === "new").length;
+}
+
 export function isInsuranceInfo(value: unknown): value is InsuranceInfo {
   if (!value || typeof value !== "object") return false;
   const insurance = value as Partial<InsuranceInfo>;
@@ -305,6 +483,8 @@ export function transitionDemoState(
       "mark-messages-read",
       "update-insurance",
       "request-refill",
+      "acknowledge-result",
+      "pay-statement",
     ].includes(action)
   ) {
     return {
@@ -635,34 +815,72 @@ export function transitionDemoState(
       };
     }
     case "request-refill":
-      if (state.refillStatus === "pending" || state.refillStatus === "approved") {
-        return {
-          ok: false,
-          status: 409,
-          error:
-            state.refillStatus === "pending"
-              ? "This refill request is already under review."
-              : "This refill request has already been approved.",
-        };
-      }
-      return { ok: true, state: { ...state, refillStatus: "pending" } };
     case "approve-refill":
-      if (state.refillStatus !== "pending") {
+    case "decline-refill": {
+      // Refills are per medication now, so every one of these needs to say
+      // WHICH medication. A missing or unknown id is a 400, not a 409: the
+      // request is malformed rather than out of sequence.
+      const medicationId = typeof input.medicationId === "string"
+        ? input.medicationId
+        : "";
+      const index = state.medications.findIndex(med => med.id === medicationId);
+      if (index === -1) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Choose one of the medications on file.",
+        };
+      }
+      const medication = state.medications[index];
+
+      const next: RefillStatus | null = action === "request-refill"
+        ? (medication.refillStatus === "none" || medication.refillStatus === "rejected"
+            ? "pending"
+            : null)
+        : medication.refillStatus === "pending"
+          ? (action === "approve-refill" ? "approved" : "rejected")
+          : null;
+
+      if (next === null) {
+        const reason = action === "request-refill"
+          ? (medication.refillStatus === "pending"
+              ? `A refill for ${medication.name} is already under review.`
+              : `The refill for ${medication.name} has already been approved.`)
+          : `Only a pending refill can be ${action === "approve-refill" ? "approved" : "declined"}.`;
+        return { ok: false, status: 409, error: reason };
+      }
+
+      const medications = state.medications.map((med, position) =>
+        position === index ? { ...med, refillStatus: next } : med,
+      );
+      return { ok: true, state: { ...state, medications } };
+    }
+    case "acknowledge-result": {
+      const resultId = typeof input.resultId === "string" ? input.resultId : "";
+      if (!state.results.some(result => result.id === resultId)) {
+        return {
+          ok: false,
+          status: 400,
+          error: "Choose one of the results on file.",
+        };
+      }
+      // Opening an already-read result is not an error, just a no-op.
+      const results = state.results.map(result =>
+        result.id === resultId ? { ...result, status: "viewed" as const } : result,
+      );
+      return { ok: true, state: { ...state, results } };
+    }
+    case "pay-statement":
+      if (state.statement.status === "paid") {
         return {
           ok: false,
           status: 409,
-          error: "Only a pending refill request can be approved.",
+          error: "This statement has already been settled.",
         };
       }
-      return { ok: true, state: { ...state, refillStatus: "approved" } };
-    case "decline-refill":
-      if (state.refillStatus !== "pending") {
-        return {
-          ok: false,
-          status: 409,
-          error: "Only a pending refill request can be declined.",
-        };
-      }
-      return { ok: true, state: { ...state, refillStatus: "rejected" } };
+      return {
+        ok: true,
+        state: { ...state, statement: { ...state.statement, status: "paid" } },
+      };
   }
 }

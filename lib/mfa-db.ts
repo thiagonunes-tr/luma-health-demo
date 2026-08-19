@@ -2,12 +2,15 @@ import { env } from "cloudflare:workers";
 import {
   type AppointmentStatus,
   type AppointmentTime,
-  BOOKED_APPOINTMENT_STATUSES,
+  type Medication,
   DEFAULT_DEMO_STATE,
   DEFAULT_INSURANCE,
   DEFAULT_INTAKE_SUBMISSION,
   DEFAULT_LAST_READ,
+  DEFAULT_MEDICATIONS,
   DEFAULT_MESSAGES,
+  DEFAULT_RESULTS,
+  DEFAULT_STATEMENT,
   DemoActorRole,
   DemoActionInput,
   DemoState,
@@ -19,7 +22,11 @@ import {
   isDemoMessage,
   isInsuranceInfo,
   isIntakeSubmission,
+  isLabResult,
+  isMedication,
   isMessageReadState,
+  isRefillStatus,
+  isStatement,
   transitionDemoState,
 } from "./demo-state";
 
@@ -35,6 +42,9 @@ export {
   type IntakeSubmission,
   type InsuranceInfo,
   type MessageReadState,
+  type Medication,
+  type LabResult,
+  type Statement,
 } from "./demo-state";
 
 let initialized = false;
@@ -210,9 +220,15 @@ export async function getDemoState(): Promise<DemoState> {
   if (!record) return DEFAULT_DEMO_STATE;
 
   try {
-    // Rows written before appointmentBooked/intakeComplete were dropped can
-    // still be in D1, so keep reading them as a migration path only.
-    type LegacyDemoState = { appointmentBooked?: boolean; intakeComplete?: boolean };
+    // Rows written before appointmentBooked/intakeComplete/refillStatus were
+    // dropped can still be in D1, so keep reading them as a migration path
+    // only. They are never written back: the response would then carry fields
+    // the documented contract does not have.
+    type LegacyDemoState = {
+      appointmentBooked?: boolean;
+      intakeComplete?: boolean;
+      refillStatus?: unknown;
+    };
     const state = JSON.parse(record.state_json) as Partial<DemoState> & LegacyDemoState;
     const appointmentStatus: AppointmentStatus = [
       "none",
@@ -253,6 +269,33 @@ export async function getDemoState(): Promise<DemoState> {
     const insurance = isInsuranceInfo(state.insurance)
       ? state.insurance
       : DEFAULT_INSURANCE;
+    // Each list falls back whole rather than per entry: a partially valid list
+    // would leave the UI reasoning about entries the guards rejected.
+    const storedMedications = Array.isArray(state.medications) &&
+      state.medications.length > 0 &&
+      state.medications.every(isMedication)
+      ? state.medications
+      : null;
+    // A row written when refillStatus was one global field carries that
+    // request's outcome. Attach it to the first medication so a pending refill
+    // survives the migration instead of silently disappearing from the queue.
+    const legacyRefill = isRefillStatus(state.refillStatus)
+      ? state.refillStatus
+      : "none";
+    const medications: Medication[] = storedMedications ??
+      DEFAULT_MEDICATIONS.map((med, index) => ({
+        ...med,
+        refillStatus: index === 0 ? legacyRefill : med.refillStatus,
+      }));
+    const results = Array.isArray(state.results) &&
+      state.results.length > 0 &&
+      state.results.every(isLabResult)
+      ? state.results
+      : DEFAULT_RESULTS;
+    const statement = isStatement(state.statement)
+      ? state.statement
+      : DEFAULT_STATEMENT;
+
     // Drop read markers that no longer point at a surviving message.
     const messageIds = new Set(messages.map((message) => message.id));
     const storedLastRead = isMessageReadState(state.lastRead)
@@ -269,21 +312,17 @@ export async function getDemoState(): Promise<DemoState> {
           : null,
     };
     return {
-      appointmentBooked: BOOKED_APPOINTMENT_STATUSES.includes(appointmentStatus),
       appointmentStatus,
       appointmentTime,
       appointmentProvider,
       appointmentSpecialty,
-      intakeComplete: intakeSubmission !== null,
       intakeSubmission,
-      refillStatus: ["none", "pending", "approved", "rejected"].includes(
-        state.refillStatus,
-      )
-        ? state.refillStatus
-        : "none",
       messages,
       lastRead,
       insurance,
+      medications,
+      results,
+      statement,
     };
   } catch {
     return DEFAULT_DEMO_STATE;
@@ -335,5 +374,8 @@ export async function resetDemoState(): Promise<DemoState> {
     ...DEFAULT_DEMO_STATE,
     messages: [...DEFAULT_MESSAGES],
     lastRead: { ...DEFAULT_LAST_READ },
+    medications: DEFAULT_MEDICATIONS.map(med => ({ ...med })),
+    results: DEFAULT_RESULTS.map(result => ({ ...result })),
+    statement: { ...DEFAULT_STATEMENT },
   };
 }

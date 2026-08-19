@@ -108,17 +108,31 @@ test("OpenAPI DemoState schema matches the persisted state shape", () => {
 });
 
 test("OpenAPI documents every input field the API forwards", () => {
+  // Read the accepted fields off the route itself rather than a list kept here:
+  // a hardcoded list passes while the route grows an undocumented input, which
+  // is exactly the drift this test exists to catch.
+  const route = readFileSync(
+    new URL("../app/api/demo-state/route.ts", import.meta.url),
+    "utf8",
+  );
+  const bodyType = route.slice(
+    route.indexOf("let body: {"),
+    route.indexOf("};", route.indexOf("let body: {")),
+  );
+  const accepted = [
+    ...new Set(
+      [...bodyType.matchAll(/^\s{4}(\w+)\?:/gm)].map(match => match[1]),
+    ),
+  ].sort();
+  assert.ok(accepted.length > 1, "could not read the route's accepted fields");
+
   const properties = Object.keys(
     document.components.schemas.DemoStateActionRequest.properties ?? {},
   ).sort();
   // additionalProperties is false, so an undocumented input is a rejected input.
-  assert.deepEqual(properties, [
-    "action",
-    "appointmentTime",
-    "insurance",
-    "intake",
-    "messageBody",
-    "provider",
-    "specialty",
-  ]);
+  assert.deepEqual(
+    properties,
+    accepted,
+    "DemoStateActionRequest has drifted from the fields the route accepts",
+  );
 });
