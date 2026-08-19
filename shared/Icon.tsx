@@ -2,8 +2,6 @@ export type IconName =
   | "alert-circle"
   | "arrow-left"
   | "arrow-right"
-  | "arrow-up-right"
-  | "bell"
   | "calendar"
   | "check"
   | "clipboard"
@@ -40,14 +38,6 @@ export function Icon({
     </>,
     "arrow-right": <>
       <path d="m9 18 6-6-6-6" />
-    </>,
-    "arrow-up-right": <>
-      <path d="M7 17 17 7" />
-      <path d="M7 7h10v10" />
-    </>,
-    bell: <>
-      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
-      <path d="M10 21h4" />
     </>,
     calendar: <>
       <rect x="3" y="5" width="18" height="16" rx="2" />

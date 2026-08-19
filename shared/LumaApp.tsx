@@ -1,7 +1,14 @@
 "use client";
 
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ACTIVE_APPOINTMENT_STATUSES,
+  DEFAULT_DEMO_STATE,
+  countUnreadMessages,
+} from "../lib/demo-state";
 import type {
+  AppointmentProvider,
+  AppointmentSpecialty,
   AppointmentStatus,
   AppointmentTime,
   DemoMessage,
@@ -12,13 +19,23 @@ import type {
   RefillStatus,
 } from "../lib/demo-state";
 import { Icon, type IconName } from "./Icon";
+import { Modal } from "./Modal";
 
 type Role = "patient" | "staff";
 type AppointmentAdvanceAction =
-  | "check-in-appointment"
   | "start-appointment"
-  | "complete-appointment";
+  | "complete-appointment"
+  | "no-show-appointment";
 type Toast = { title: string; message: string; tone: "success" | "error" } | null;
+type PortalModal =
+  | null
+  | "account"
+  | "booking"
+  | "intake"
+  | "insurance"
+  | "lab-result"
+  | "visit-summary";
+type StaffModal = null | "appointment" | "intake-review" | "patient-search";
 type AuthUser = { email: string; name: string; role: Role };
 type Challenge = {
   id: string;
@@ -46,10 +63,12 @@ type PatientProfile = {
 
 const appointments: StaffAppointment[] = [
   { time: "8:30 AM", patient: "Riley Smith", type: "Routine visit", status: "Confirmed" },
-  { time: "9:15 AM", patient: "Jordan Lee", type: "Follow-up", status: "Waiting" },
+  { time: "9:15 AM", patient: "Jordan Lee", type: "Follow-up", status: "In waiting room" },
   { time: "10:00 AM", patient: "Alex Carter", type: "First appointment", status: "Confirmed" },
   { time: "11:30 AM", patient: "Priya Shah", type: "Follow-up", status: "Confirmed" },
 ];
+
+const DEMO_PATIENT_EMAIL = "patient.demo@testrigor-mail.com";
 
 const patientProfiles: PatientProfile[] = [
   { name: "Maria Lopez", initials: "ML", dateOfBirth: "May 14, 1987", email: "patient.demo@testrigor-mail.com", lastVisit: "July 12, 2026" },
@@ -59,14 +78,28 @@ const patientProfiles: PatientProfile[] = [
   { name: "Riley Smith", initials: "RS", dateOfBirth: "March 30, 1995", email: "riley.smith@example.test", lastVisit: "June 11, 2026" },
 ];
 
-const navItems = ["Overview", "Appointments", "Forms", "Results", "Messages"];
-const navIcons: IconName[] = [
-  "home",
-  "calendar",
-  "clipboard",
-  "flask",
-  "message",
+type PatientNavId = "home" | "appointments" | "record" | "messages";
+type StaffNavId = "today" | "requests" | "messages";
+type NavId = PatientNavId | StaffNavId;
+type NavEntry = { id: NavId; label: string; icon: IconName };
+
+const PATIENT_NAV: NavEntry[] = [
+  { id: "home", label: "Home", icon: "home" },
+  { id: "appointments", label: "Appointments", icon: "calendar" },
+  { id: "record", label: "Health record", icon: "clipboard" },
+  { id: "messages", label: "Messages", icon: "message" },
 ];
+
+const STAFF_NAV: NavEntry[] = [
+  { id: "today", label: "Today", icon: "home" },
+  { id: "requests", label: "Requests", icon: "clipboard" },
+  { id: "messages", label: "Messages", icon: "message" },
+];
+
+/** Where each role lands after signing in. */
+function homeNavFor(role: Role): NavId {
+  return role === "patient" ? "home" : "today";
+}
 
 function formatAppointmentTime(time: AppointmentTime): string {
   return {
@@ -76,14 +109,61 @@ function formatAppointmentTime(time: AppointmentTime): string {
   }[time];
 }
 
+/**
+ * Mirrors the server's per-field rules (lib/demo-state.ts `isRequiredText`) so
+ * the message names the field instead of the form. Returns a message per
+ * invalid field, keyed by input name.
+ */
+function validateText(
+  values: Record<string, string>,
+  limits: Record<string, number>,
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const [name, max] of Object.entries(limits)) {
+    const value = (values[name] ?? "").trim();
+    if (value.length === 0) errors[name] = "This field is required.";
+    else if (value.length > max) errors[name] = `Use ${max} characters or fewer.`;
+  }
+  return errors;
+}
+
+/** Props that wire an input to its error message for assistive tech. */
+function fieldProps(name: string, errors: Record<string, string>) {
+  return errors[name]
+    ? { "aria-invalid": true as const, "aria-describedby": `${name}-error` }
+    : {};
+}
+
+/** The error <p> sits after the wrapping <label>, so query the control by name. */
+function focusFirstInvalid(form: HTMLFormElement, name: string) {
+  const field = form.elements.namedItem(name);
+  if (field instanceof HTMLElement) field.focus();
+}
+
+function FieldError({ name, errors }: { name: string; errors: Record<string, string> }) {
+  if (!errors[name]) return null;
+  return <p className="field-error" id={`${name}-error`} role="alert">{errors[name]}</p>;
+}
+
+function refillStatusLabel(status: RefillStatus): string {
+  return {
+    none: "No request",
+    pending: "Awaiting review",
+    approved: "Approved",
+    rejected: "Declined",
+  }[status];
+}
+
 function appointmentStatusLabel(status: AppointmentStatus): string {
   return {
     none: "No appointment",
     scheduled: "Scheduled",
+    confirmed: "Confirmed",
     "checked-in": "Checked in",
     "in-progress": "In progress",
     completed: "Completed",
     cancelled: "Cancelled",
+    "no-show": "Did not attend",
   }[status];
 }
 
@@ -93,29 +173,15 @@ export default function Home() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [challenge, setChallenge] = useState<Challenge | null>(null);
-  const [activeNav, setActiveNav] = useState("Overview");
-  const [showAccount, setShowAccount] = useState(false);
-  const [showBooking, setShowBooking] = useState(false);
-  const [showIntake, setShowIntake] = useState(false);
-  const [showInsurance, setShowInsurance] = useState(false);
-  const [showLabResult, setShowLabResult] = useState(false);
-  const [showVisitSummary, setShowVisitSummary] = useState(false);
-  const [appointmentBooked, setAppointmentBooked] = useState(false);
-  const [appointmentStatus, setAppointmentStatus] =
-    useState<AppointmentStatus>("none");
-  const [appointmentTime, setAppointmentTime] =
-    useState<AppointmentTime>("10:30");
-  const [intakeComplete, setIntakeComplete] = useState(false);
-  const [intakeSubmission, setIntakeSubmission] =
-    useState<IntakeSubmission | null>(null);
-  const [refillStatus, setRefillStatus] = useState<RefillStatus>("none");
-  const [messages, setMessages] = useState<DemoMessage[]>([]);
-  const [insurance, setInsurance] = useState<InsuranceInfo>({
-    provider: "HealthFirst Demo",
-    planName: "Silver Care",
-    memberId: "HF-2048",
-    updatedAt: "Initial demo record",
-  });
+  const [activeNav, setActiveNav] = useState<NavId>("home");
+  // One discriminant instead of six booleans that were never meant to overlap.
+  const [activeModal, setActiveModal] = useState<PortalModal>(null);
+  const closeModal = () => setActiveModal(null);
+  const [demo, setDemo] = useState<DemoState>(DEFAULT_DEMO_STATE);
+  // Derived rather than stored: setting state synchronously inside the effect
+  // body triggers cascading renders. Track which account's state has landed.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const { appointmentStatus, appointmentTime, intakeSubmission, messages, insurance } = demo;
   const [demoBusy, setDemoBusy] = useState<DemoStateAction | null>(null);
   const [toast, setToast] = useState<Toast>(null);
   const toastTimer = useRef<number | null>(null);
@@ -124,6 +190,10 @@ export default function Home() {
     new Intl.DateTimeFormat("en-US", { weekday: "long", day: "numeric", month: "long" })
       .format(new Date(2026, 6, 24)), []);
   const role = user?.role ?? "patient";
+  const navEntries = role === "patient" ? PATIENT_NAV : STAFF_NAV;
+  // A personal account shares Maria Lopez's clinical record; say so plainly.
+  const sharedRecord = role === "patient" && user?.email !== DEMO_PATIENT_EMAIL;
+  const unreadMessages = countUnreadMessages(demo, role);
   const displayName = user?.name ?? (role === "patient" ? "Maria Lopez" : "Thiago Nunes");
   const initials = displayName
     .split(/\s+/)
@@ -140,7 +210,12 @@ export default function Home() {
         const data = await response.json() as { user: AuthUser };
         return data.user;
       })
-      .then(sessionUser => { if (active) setUser(sessionUser); })
+      .then(sessionUser => {
+        if (!active) return;
+        setUser(sessionUser);
+        // A restored session must land on a destination its role actually has.
+        if (sessionUser) setActiveNav(homeNavFor(sessionUser.role));
+      })
       .catch(() => undefined)
       .finally(() => { if (active) setAuthLoading(false); });
     return () => { active = false; };
@@ -155,7 +230,7 @@ export default function Home() {
         return response.json() as Promise<{ state: DemoState }>;
       })
       .then(data => {
-        if (active) applyDemoState(data.state);
+        if (active) setDemo(data.state);
       })
       .catch(error => {
         if (active) {
@@ -165,7 +240,8 @@ export default function Home() {
             "error",
           );
         }
-      });
+      })
+      .finally(() => { if (active) setLoadedFor(user.email); });
     return () => { active = false; };
   }, [user]);
 
@@ -192,7 +268,7 @@ export default function Home() {
       if (response.ok && data.user) {
         setUser(data.user);
         setChallenge(null);
-        setActiveNav("Overview");
+        setActiveNav(homeNavFor(data.user.role));
         return;
       }
       if (!response.ok || !data.challengeId || !data.destination) {
@@ -222,7 +298,7 @@ export default function Home() {
       }
       setUser(data.user);
       setChallenge(null);
-      setActiveNav("Overview");
+      setActiveNav(homeNavFor(data.user.role));
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "The code could not be verified.");
     } finally {
@@ -255,16 +331,6 @@ export default function Home() {
     }, 3600);
   }
 
-  function applyDemoState(state: DemoState) {
-    setAppointmentBooked(state.appointmentBooked);
-    setAppointmentStatus(state.appointmentStatus);
-    setAppointmentTime(state.appointmentTime);
-    setIntakeComplete(state.intakeComplete);
-    setIntakeSubmission(state.intakeSubmission);
-    setRefillStatus(state.refillStatus);
-    setMessages(state.messages);
-    setInsurance(state.insurance);
-  }
 
   async function performDemoAction(
     action: DemoStateAction,
@@ -272,6 +338,8 @@ export default function Home() {
     successMessage: string,
     input: {
       appointmentTime?: AppointmentTime;
+      provider?: AppointmentProvider;
+      specialty?: AppointmentSpecialty;
       intake?: Omit<IntakeSubmission, "submittedAt">;
       messageBody?: string;
       insurance?: Omit<InsuranceInfo, "updatedAt">;
@@ -287,9 +355,9 @@ export default function Home() {
       });
       const data = await response.json() as { state?: DemoState; error?: string };
       if (!response.ok || !data.state) {
-        throw new Error(data.error ?? "The change could not be saved.");
+        throw new Error(friendlyActionError(response.status, data.error));
       }
-      applyDemoState(data.state);
+      setDemo(data.state);
       notify(successTitle, successMessage);
       return true;
     } catch (error) {
@@ -308,14 +376,67 @@ export default function Home() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const selectedTime = String(form.get("time")) as AppointmentTime;
-    const isRescheduling = appointmentStatus === "scheduled";
+    const isRescheduling =
+      appointmentStatus === "scheduled" || appointmentStatus === "confirmed";
     const saved = await performDemoAction(
       isRescheduling ? "reschedule-appointment" : "book-appointment",
       isRescheduling ? "Appointment rescheduled" : "Appointment booked",
-      `Your appointment is confirmed for July 24 at ${formatAppointmentTime(selectedTime)}.`,
-      { appointmentTime: selectedTime },
+      `Your appointment is booked for July 24 at ${formatAppointmentTime(selectedTime)}. Confirm your attendance to finish.`,
+      {
+        appointmentTime: selectedTime,
+        provider: String(form.get("provider")) as AppointmentProvider,
+        specialty: String(form.get("specialty")) as AppointmentSpecialty,
+      },
     );
-    if (saved) setShowBooking(false);
+    if (saved) closeModal();
+  }
+
+  /**
+   * The API's error strings are part of its documented contract and are written
+   * for an integrator. Two of them name the other role, which reads as a
+   * non-sequitur to the person who just clicked something.
+   */
+  function friendlyActionError(status: number, apiError?: string): string {
+    if (status === 403) return "That action is not available for your account.";
+    if (status === 401) return "Your session ended. Sign in again to continue.";
+    if (status === 409) {
+      // 409 strings are written for an integrator ("Only a checked-in
+      // appointment can be started"). Say what the reader should do instead.
+      return `${apiError ?? "This step is not available yet."} Reload to see the current state.`;
+    }
+    return apiError ?? "The change could not be saved.";
+  }
+
+  async function markMessagesRead() {
+    // Silent: reading a thread is not an event worth a toast.
+    if (demoBusy) return;
+    try {
+      const response = await fetch("/api/demo-state", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "mark-messages-read" }),
+      });
+      const data = await response.json() as { state?: DemoState };
+      if (response.ok && data.state) setDemo(data.state);
+    } catch {
+      // A failed read marker is not worth interrupting the user over.
+    }
+  }
+
+  async function confirmAppointment() {
+    await performDemoAction(
+      "confirm-appointment",
+      "Attendance confirmed",
+      "The clinic knows you are coming to this visit.",
+    );
+  }
+
+  async function checkInAppointment() {
+    await performDemoAction(
+      "check-in-appointment",
+      "You are checked in",
+      "Your arrival is now visible to clinic staff.",
+    );
   }
 
   async function cancelAppointment() {
@@ -324,14 +445,14 @@ export default function Home() {
       "Appointment cancelled",
       "The clinic schedule and your portal have been updated.",
     );
-    if (saved) setShowBooking(false);
+    if (saved) closeModal();
   }
 
   async function requestRefill() {
     await performDemoAction(
       "request-refill",
       "Request submitted",
-      "The clinic team can now review your refill request.",
+      "Clinic staff can now review your refill request.",
     );
   }
 
@@ -340,11 +461,11 @@ export default function Home() {
   ) {
     const saved = await performDemoAction(
       "submit-intake",
-      intakeComplete ? "Form updated" : "Form submitted",
-      "Your answers are available to the clinic team.",
+      intakeSubmission !== null ? "Form updated" : "Form submitted",
+      "Your answers are available to clinic staff.",
       { intake },
     );
-    if (saved) setShowIntake(false);
+    if (saved) closeModal();
   }
 
   async function sendMessage(messageBody: string) {
@@ -352,7 +473,7 @@ export default function Home() {
       "send-message",
       "Message sent",
       role === "patient"
-        ? "Your care team can now read your message."
+        ? "Clinic staff can now read your message."
         : "The patient can now read your reply.",
       { messageBody },
     );
@@ -367,7 +488,7 @@ export default function Home() {
       "The new demo coverage information was saved.",
       { insurance: insuranceInput },
     );
-    if (saved) setShowInsurance(false);
+    if (saved) closeModal();
   }
 
   async function approveRefill() {
@@ -388,9 +509,9 @@ export default function Home() {
 
   async function advanceAppointment(action: AppointmentAdvanceAction) {
     const copy = {
-      "check-in-appointment": {
-        title: "Patient checked in",
-        message: "Maria Lopez is ready for the clinical team.",
+      "no-show-appointment": {
+        title: "Marked as did not attend",
+        message: "The patient can book a new appointment.",
       },
       "start-appointment": {
         title: "Visit started",
@@ -404,6 +525,81 @@ export default function Home() {
     if (!copy) return;
     await performDemoAction(action, copy.title, copy.message);
   }
+
+  const messageCenter = () => (
+    <MessageCenter
+      role={role}
+      sharedRecord={sharedRecord}
+      messages={messages}
+      busy={demoBusy !== null}
+      unread={unreadMessages}
+      onSend={sendMessage}
+      onRead={markMessagesRead}
+    />
+  );
+
+  const patientDestinations: Record<PatientNavId, () => ReactNode> = {
+    home: () => (
+      <PatientHome
+        sharedRecord={sharedRecord}
+        patientName={displayName.split(/\s+/)[0] || "there"}
+        demo={demo}
+        busyAction={demoBusy}
+        onBook={() => setActiveModal("booking")}
+        onConfirm={confirmAppointment}
+        onCheckIn={checkInAppointment}
+        onOpenIntake={() => setActiveModal("intake")}
+        onRequestRefill={requestRefill}
+        onGoTo={setActiveNav}
+      />
+    ),
+    appointments: () => (
+      <PatientAppointments
+        sharedRecord={sharedRecord}
+        demo={demo}
+        busyAction={demoBusy}
+        onBook={() => setActiveModal("booking")}
+        onConfirm={confirmAppointment}
+        onCheckIn={checkInAppointment}
+      />
+    ),
+    record: () => (
+      <HealthRecord
+        demo={demo}
+        sharedRecord={sharedRecord}
+        onOpenIntake={() => setActiveModal("intake")}
+        onOpenInsurance={() => setActiveModal("insurance")}
+        onOpenLab={() => setActiveModal("lab-result")}
+        onOpenSummary={() => setActiveModal("visit-summary")}
+      />
+    ),
+    messages: messageCenter,
+  };
+
+  const staffDestinations: Record<StaffNavId, () => ReactNode> = {
+    today: () => (
+      <StaffToday
+        staffName={displayName.split(/\s+/)[0] || "there"}
+        demo={demo}
+        busyAction={demoBusy}
+        onAdvanceAppointment={advanceAppointment}
+        onOpenSummary={() => setActiveModal("visit-summary")}
+        onGoTo={setActiveNav}
+      />
+    ),
+    requests: () => (
+      <StaffRequests
+        demo={demo}
+        busyAction={demoBusy}
+        onApproveRefill={approveRefill}
+        onDeclineRefill={declineRefill}
+      />
+    ),
+    messages: messageCenter,
+  };
+
+  const destinations: Partial<Record<NavId, () => ReactNode>> =
+    role === "patient" ? patientDestinations : staffDestinations;
 
   if (authLoading) return <AuthLoading />;
   if (!user) {
@@ -419,125 +615,81 @@ export default function Home() {
   }
 
   return (
-    <main className="app-shell">
-      <aside className="sidebar" aria-label="Main navigation">
+    <div className="app-shell">
+      <a className="skip-link" href="#main-content">Skip to main content</a>
+
+      {/* The primary navigation sits early in the DOM so the mobile bar is not
+          the last tab stop on small screens, where it is the only nav. */}
+      <nav className="mobile-nav" aria-label="Primary">
+        {navEntries.map(entry => (
+          <button key={entry.id} className={activeNav === entry.id ? "active" : ""} onClick={() => setActiveNav(entry.id)}><span><Icon name={entry.icon} size={19} /></span>{entry.label.split(" ")[0]}</button>
+        ))}
+      </nav>
+
+      <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true"><i></i><b></b></span>
           <span>Luma <strong>Health</strong></span>
         </div>
 
-        <div className="role-label" aria-label="Signed-in account type">
-          <span><Icon name="shield-check" size={13} /></span>{role === "patient" ? "Patient portal" : "Employee access"}
+        <div className="role-label">
+          <span><Icon name="shield-check" size={13} /></span>{role === "patient" ? "Patient portal" : "Clinic staff portal"}
         </div>
 
-        <nav>
+        <nav aria-label="Main navigation">
           <p className="nav-label">MENU</p>
-          {navItems.map((item, index) => (
+          {navEntries.map(entry => (
             <button
-              key={item}
-              className={activeNav === item ? "nav-item active" : "nav-item"}
-              onClick={() => setActiveNav(item)}
+              key={entry.id}
+              className={activeNav === entry.id ? "nav-item active" : "nav-item"}
+              onClick={() => setActiveNav(entry.id)}
             >
-              <span className="nav-icon"><Icon name={navIcons[index]} size={18} /></span>
-              {item}
-              {item === "Messages" && <span className="nav-badge">{messages.length}</span>}
+              <span className="nav-icon"><Icon name={entry.icon} size={18} /></span>
+              {entry.label}
+              {entry.id === "messages" && unreadMessages > 0 && <span className="nav-badge">{unreadMessages}</span>}
             </button>
           ))}
         </nav>
 
         <div className="sidebar-help">
-          <span className="help-icon"><Icon name="help-circle" size={18} /></span>
-          <div><strong>Need help?</strong><small>Contact our team</small></div>
+          <span className="help-icon" aria-hidden="true"><Icon name="help-circle" size={18} /></span>
+          <div><strong>Demo environment</strong><small>No support channel exists</small></div>
         </div>
-        <button className="sidebar-user" onClick={signOut} aria-label="Sign out">
+        <button className="sidebar-user" onClick={() => setActiveModal("account")}>
           <span className="avatar">{initials}</span>
-          <div><strong>{displayName}</strong><small>{role === "patient" ? "Patient" : "Administrator"}</small></div>
-          <span className="sign-out">Sign out</span>
+          <div><strong>{displayName}</strong><small>{role === "patient" ? "Patient" : "Clinic staff"}</small></div>
+          <span className="user-action">Account <Icon name="arrow-right" size={13} /></span>
         </button>
       </aside>
 
-      <section className="workspace">
+      <div className="workspace">
         <header className="topbar">
-          <button className="mobile-brand" onClick={() => setActiveNav("Overview")} aria-label="Back to overview">
+          <button className="mobile-brand" onClick={() => setActiveNav(homeNavFor(role))} aria-label="Back to start">
             <span className="brand-mark small" aria-hidden="true"><i></i><b></b></span>Luma Health
           </button>
           <div className="top-actions">
-            <button className="icon-button" aria-label="Search"><Icon name="search" size={18} /></button>
-            <button className="icon-button notification" aria-label="Notifications"><Icon name="bell" size={18} /><span></span></button>
-            <button className="top-user" onClick={() => setShowAccount(true)} aria-label="Account settings"><span className="avatar">{initials}</span><span><strong>{displayName}</strong><small>{role === "patient" ? "Patient · Account settings" : "Clinic staff · Account settings"}</small></span></button>
+            <button className="top-user" onClick={() => setActiveModal("account")} aria-label="Account settings"><span className="avatar">{initials}</span><span><strong>{displayName}</strong><small>{role === "patient" ? "Patient · Account settings" : "Clinic staff · Account settings"}</small></span></button>
           </div>
         </header>
 
-        {activeNav === "Messages" ? (
-          <MessageCenter
-            role={role}
-            messages={messages}
-            busy={demoBusy !== null}
-            onSend={sendMessage}
-          />
-        ) : activeNav === "Results" ? (
-          <ClinicalDocuments
-            role={role}
-            onOpenLab={() => setShowLabResult(true)}
-            onOpenSummary={() => setShowVisitSummary(true)}
-          />
-        ) : role === "patient" && activeNav === "Forms" ? (
-          <PatientForms
-            intakeComplete={intakeComplete}
-            insurance={insurance}
-            onOpenIntake={() => setShowIntake(true)}
-            onOpenInsurance={() => setShowInsurance(true)}
-          />
-        ) : role === "patient" ? (
-          <PatientDashboard
-            patientName={displayName.split(/\s+/)[0] || "there"}
-            activeNav={activeNav}
-            dateLabel={dateLabel}
-            appointmentStatus={appointmentStatus}
-            appointmentTime={appointmentTime}
-            intakeComplete={intakeComplete}
-            refillStatus={refillStatus}
-            busy={demoBusy !== null}
-            onBook={() => setShowBooking(true)}
-            onOpenIntake={() => setShowIntake(true)}
-            onOpenMessages={() => setActiveNav("Messages")}
-            onOpenLab={() => setShowLabResult(true)}
-            onOpenSummary={() => setShowVisitSummary(true)}
-            onRequestRefill={requestRefill}
-          />
-        ) : (
-          <StaffDashboard
-            staffName={displayName.split(/\s+/)[0] || "there"}
-            appointmentBooked={appointmentBooked}
-            appointmentStatus={appointmentStatus}
-            appointmentTime={appointmentTime}
-            intakeComplete={intakeComplete}
-            intakeSubmission={intakeSubmission}
-            insurance={insurance}
-            refillStatus={refillStatus}
-            busy={demoBusy !== null}
-            onApproveRefill={approveRefill}
-            onDeclineRefill={declineRefill}
-            onAdvanceAppointment={advanceAppointment}
-            onOpenSummary={() => setShowVisitSummary(true)}
-          />
-        )}
+        <main id="main-content" tabIndex={-1} aria-busy={(user !== null && loadedFor !== user.email) || demoBusy !== null}>
+          {(destinations[activeNav] ?? destinations[homeNavFor(role)])?.() ?? null}
+        </main>
 
-        <nav className="mobile-nav" aria-label="Mobile navigation">
-          {navItems.map((item, index) => {
-            return <button key={item} className={activeNav === item ? "active" : ""} onClick={() => setActiveNav(item)}><span><Icon name={navIcons[index]} size={19} /></span>{item.split(" ")[0]}</button>;
-          })}
-        </nav>
-      </section>
+        <footer className="app-footer">
+          <p>Luma Health is a fictional healthcare portal for QA automation training. Nothing here is real medical information.</p>
+          <p>Demo data · {dateLabel}</p>
+        </footer>
+      </div>
 
-      {showBooking && <BookingModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} busy={demoBusy !== null} onCancel={cancelAppointment} onClose={() => setShowBooking(false)} onSubmit={bookAppointment} />}
-      {showIntake && <IntakeFormModal intakeSubmission={intakeSubmission} busy={demoBusy !== null} onClose={() => setShowIntake(false)} onSubmit={submitIntake} />}
-      {showInsurance && <InsuranceModal insurance={insurance} busy={demoBusy !== null} onClose={() => setShowInsurance(false)} onSubmit={updateInsurance} />}
-      {showLabResult && <LabResultModal onClose={() => setShowLabResult(false)} />}
-      {showVisitSummary && <VisitSummaryModal onClose={() => setShowVisitSummary(false)} />}
-      {showAccount && <AccountModal user={user} onClose={() => setShowAccount(false)} onDeleted={() => { setShowAccount(false); setUser(null); setActiveNav("Overview"); }} onSignOut={signOut} />}
+      {activeModal === "booking" && <BookingModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} appointmentProvider={demo.appointmentProvider} appointmentSpecialty={demo.appointmentSpecialty} busy={demoBusy !== null} onCancel={cancelAppointment} onClose={() => closeModal()} onSubmit={bookAppointment} />}
+      {activeModal === "intake" && <IntakeFormModal intakeSubmission={intakeSubmission} busy={demoBusy !== null} onClose={() => closeModal()} onSubmit={submitIntake} />}
+      {activeModal === "insurance" && <InsuranceModal insurance={insurance} busy={demoBusy !== null} onClose={() => closeModal()} onSubmit={updateInsurance} />}
+      {activeModal === "lab-result" && <LabResultModal onClose={() => closeModal()} />}
+      {activeModal === "visit-summary" && <VisitSummaryModal onClose={() => closeModal()} />}
+      {activeModal === "account" && <AccountModal user={user} onClose={() => closeModal()} onDeleted={() => { closeModal(); setUser(null); setActiveNav(homeNavFor(role)); }} onSignOut={signOut} />}
       {toast && <div className={`toast ${toast.tone}`} role={toast.tone === "error" ? "alert" : "status"}><span><Icon name={toast.tone === "error" ? "alert-circle" : "check"} size={16} /></span><div><strong>{toast.title}</strong><p>{toast.message}</p></div><button onClick={() => setToast(null)} aria-label="Close"><Icon name="close" size={17} /></button></div>}
-    </main>
+    </div>
   );
 }
 
@@ -586,7 +738,7 @@ function AccountModal({ user, onClose, onDeleted, onSignOut }: {
     }
   }
 
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal account-modal" role="dialog" aria-modal="true" aria-labelledby="account-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close" disabled={busy}><Icon name="close" size={18} /></button><p className="eyebrow">ACCOUNT</p><h2 id="account-title">Account settings</h2><p>Manage the signed-in account for this demonstration.</p><dl className="review-details"><div><dt>Name</dt><dd>{user.name}</dd></div><div><dt>Email</dt><dd>{user.email}</dd></div><div><dt>Role</dt><dd>{user.role === "staff" ? "Employee" : "Patient"}</dd></div></dl>{fixedDemoAccount ? <div className="protected-account"><span><Icon name="shield-check" size={18} /></span><div><strong>Protected demo account</strong><p>Fixed accounts cannot be deleted, so shared QA credentials remain available.</p></div></div> : <form className="danger-zone" onSubmit={deleteAccount}><div><strong>Delete account permanently</strong><p>This removes the user, pending registrations, and MFA challenges. Shared fictional workflow data is not affected.</p></div><label>Current password<input type="password" value={password} onChange={event => setPassword(event.target.value)} required /></label><label>Type DELETE to confirm<input value={confirmation} onChange={event => setConfirmation(event.target.value)} autoComplete="off" required /></label>{error && <p className="auth-error" role="alert">{error}</p>}<button className="danger-button full" type="submit" disabled={busy || !password || confirmation !== "DELETE"}>{busy ? "Deleting…" : "Delete my account"}</button></form>}<button className="secondary-button full" onClick={() => void onSignOut()} disabled={busy}>Sign out</button></div></div>;
+  return <Modal confirmDiscard labelledBy="account-title" className="account-modal" closeDisabled={busy} onClose={onClose}><p className="eyebrow">ACCOUNT</p><h2 id="account-title">Account settings</h2><p>Manage the signed-in account for this demonstration.</p><dl className="review-details"><div><dt>Name</dt><dd>{user.name}</dd></div><div><dt>Email</dt><dd>{user.email}</dd></div><div><dt>Role</dt><dd>{user.role === "staff" ? "Clinic staff" : "Patient"}</dd></div></dl>{fixedDemoAccount ? <div className="protected-account"><span><Icon name="shield-check" size={18} /></span><div><strong>Protected demo account</strong><p>Fixed accounts cannot be deleted, so shared QA credentials remain available.</p></div></div> : <form className="danger-zone" onSubmit={deleteAccount}><div><strong>Delete account permanently</strong><p>This removes the user, pending registrations, and MFA challenges. Shared fictional workflow data is not affected.</p></div><label>Current password<input type="password" value={password} onChange={event => setPassword(event.target.value)} required /></label><label>Type DELETE to confirm<input value={confirmation} onChange={event => setConfirmation(event.target.value)} autoComplete="off" required /></label>{error && <p className="auth-error" role="alert">{error}</p>}<button className="danger-button full" type="submit" disabled={busy || !password || confirmation !== "DELETE"}>{busy ? "Deleting…" : "Delete my account"}</button></form>}<button className="secondary-button full" onClick={() => void onSignOut()} disabled={busy}>Sign out</button></Modal>;
 }
 
 function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResend }: {
@@ -636,15 +788,15 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
   }
 
   return <main className="auth-shell">
-    <section className="auth-story" aria-label="Luma Health introduction">
+    <div className="auth-story">
       <div className="auth-brand"><span className="brand-mark" aria-hidden="true"><i></i><b></b></span><span>Luma <strong>Health</strong></span></div>
       <div className="auth-story-copy">
         <p className="eyebrow light">SECURE DIGITAL CARE</p>
         <h1>Healthcare access,<br />made reassuringly simple.</h1>
-        <p>Patients and clinic employees use the same secure sign-in, with an email verification code protecting every account.</p>
+        <p>Patients and clinic staff use the same secure sign-in, with an email verification code protecting every account you create.</p>
       </div>
-      <div className="security-note"><span><Icon name="shield-check" size={18} /></span><div><strong>Two-step verification</strong><small>Your password and a one-time email code protect your account.</small></div></div>
-    </section>
+      <div className="security-note"><span><Icon name="shield-check" size={18} /></span><div><strong>Two-step verification</strong><small>Accounts you create are protected by a password and a one-time email code. The two shared demo accounts can skip the code.</small></div></div>
+    </div>
     <section className="auth-panel">
       <div className="auth-card">
         {!challenge ? <>
@@ -682,7 +834,7 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
                 <div><span>Password</span><code>{credentials.password}</code></div>
                 <button type="button" onClick={() => void copyCredential("password", credentials.password)}>{copiedCredential === "password" ? "Copied" : "Copy"}</button>
               </div>
-              <p>A real verification code will be sent by email after sign-in.</p>
+              <p>Continue with the code to receive a real email. The skip button below signs in without one.</p>
             </div> : <div className="demo-credentials" aria-label="New account instructions">
               <div className="demo-credentials-heading"><strong>Create a new account</strong><span>Password + email code</span></div>
               <p>Choose whether you are a patient or employee, then enter your email and create a password with at least 8 characters.</p>
@@ -695,7 +847,10 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
           <h2>Enter your verification code</h2>
           <p className="auth-subtitle">We sent a six-digit code to <strong>{challenge.destination}</strong>. It expires in 10 minutes.</p>
           <form className="auth-form code-form" onSubmit={submitCode}>
-            <label>Verification code<input className="code-input" name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" placeholder="000000" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} autoFocus required /></label>
+            {/* eslint-disable-next-line jsx-a11y/no-autofocus -- this step exists only to
+        type the emailed code, and focus arrives here after a deliberate
+        navigation, not on initial page load. */}
+                <label>Verification code<input className="code-input" name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" placeholder="000000" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, "").slice(0, 6))} autoFocus required /></label>
             {error && <p className="auth-error" role="alert">{error}</p>}
             <button className="primary-button auth-submit" type="submit" disabled={busy || code.length !== 6}>{busy ? "Verifying…" : "Verify and sign in"}</button>
           </form>
@@ -712,106 +867,188 @@ function AuthScreen({ challenge, busy, error, onLogin, onVerify, onBack, onResen
   </main>;
 }
 
-function PatientDashboard({ patientName, activeNav, dateLabel, appointmentStatus, appointmentTime, intakeComplete, refillStatus, busy, onBook, onOpenIntake, onOpenMessages, onOpenLab, onOpenSummary, onRequestRefill }: {
-  patientName: string;
-  activeNav: string;
-  dateLabel: string;
+function VisitStep({ appointmentStatus, busyAction, onConfirm, onCheckIn }: {
   appointmentStatus: AppointmentStatus;
-  appointmentTime: AppointmentTime;
-  intakeComplete: boolean;
-  refillStatus: RefillStatus;
-  busy: boolean;
-  onBook: () => void;
-  onOpenIntake: () => void;
-  onOpenMessages: () => void;
-  onOpenLab: () => void;
-  onOpenSummary: () => void;
-  onRequestRefill: () => void | Promise<unknown>;
+  busyAction: DemoStateAction | null;
+  onConfirm: () => void | Promise<unknown>;
+  onCheckIn: () => void | Promise<unknown>;
 }) {
-  const hasActiveAppointment = ["scheduled", "checked-in", "in-progress"].includes(
-    appointmentStatus,
-  );
-  const canBookAppointment = ["none", "cancelled", "completed"].includes(
-    appointmentStatus,
-  );
+  if (appointmentStatus === "scheduled") {
+    return <section className="visit-step" aria-label="Next step for your visit">
+      <div><p className="eyebrow">NEXT STEP</p><strong>Confirm you are attending</strong><p>The clinic needs to know you are coming before you can check in on the day.</p></div>
+      <button className="primary-button" disabled={busyAction !== null} onClick={() => void onConfirm()}><Icon name="check" size={17} /> {busyAction === "confirm-appointment" ? "Saving…" : "Confirm attendance"}</button>
+    </section>;
+  }
+  if (appointmentStatus === "confirmed") {
+    return <section className="visit-step" aria-label="Next step for your visit">
+      <div><p className="eyebrow">NEXT STEP</p><strong>Check in for your visit</strong><p>Check in when you arrive at the clinic so the care team knows you are here.</p></div>
+      <button className="primary-button" disabled={busyAction !== null} onClick={() => void onCheckIn()}><Icon name="shield-check" size={17} /> {busyAction === "check-in-appointment" ? "Saving…" : "Check in now"}</button>
+    </section>;
+  }
+  return null;
+}
+
+function AppointmentHero({ demo, onOpen }: { demo: DemoState; onOpen: () => void }) {
+  const { appointmentStatus, appointmentTime, appointmentProvider, appointmentSpecialty } = demo;
+  const isAhead = ["scheduled", "confirmed", "checked-in", "in-progress"].includes(appointmentStatus);
+  const provider = appointmentProvider ?? "Dr. Ana Costa";
+  const specialty = appointmentSpecialty ?? "Primary Care";
+  return <section className="hero-card" aria-label="Next appointment">
+    <div className="hero-copy">
+      <span className="status-pill"><i></i> {appointmentStatusLabel(appointmentStatus).toUpperCase()}</span>
+      <p className="hero-date">{isAhead ? "July 24" : "Patient portal"}</p>
+      <h2>{isAhead ? "Follow-up appointment" : appointmentStatus === "completed" ? "Visit completed" : appointmentStatus === "cancelled" ? "Appointment cancelled" : appointmentStatus === "no-show" ? "Appointment missed" : "No appointment scheduled"}</h2>
+      <p className="doctor"><span className="doctor-avatar">{provider.replace("Dr. ", "").split(" ").map(part => part[0]).join("")}</span><span><strong>{provider}</strong><small>{specialty} · Room 204</small></span></p>
+    </div>
+    <div className="appointment-time">
+      <strong>{isAhead ? formatAppointmentTime(appointmentTime) : appointmentStatus === "completed" ? "DONE" : "—"}</strong><span>{isAhead ? "clinic time" : "book when ready"}</span>
+      <button onClick={onOpen}>Open appointments <Icon name="arrow-right" size={13} /></button>
+    </div>
+    <div className="hero-decoration" aria-hidden="true"><i></i><b></b><em></em></div>
+  </section>;
+}
+
+function PatientHome({ sharedRecord, patientName, demo, busyAction, onBook, onConfirm, onCheckIn, onOpenIntake, onRequestRefill, onGoTo }: {
+  sharedRecord: boolean;
+  patientName: string;
+  demo: DemoState;
+  busyAction: DemoStateAction | null;
+  onBook: () => void;
+  onConfirm: () => void | Promise<unknown>;
+  onCheckIn: () => void | Promise<unknown>;
+  onOpenIntake: () => void;
+  onRequestRefill: () => void | Promise<unknown>;
+  onGoTo: (id: NavId) => void;
+}) {
+  const { appointmentStatus, intakeSubmission, refillStatus } = demo;
+  const canBook = ["none", "cancelled", "completed", "no-show"].includes(appointmentStatus);
+  const intakeDue = intakeSubmission === null &&
+    ACTIVE_APPOINTMENT_STATUSES.includes(appointmentStatus);
 
   return <div className="page-content">
     <div className="welcome-row">
-      <div><p className="eyebrow">PATIENT PORTAL</p><h1>{activeNav === "Overview" ? `Hello, ${patientName}.` : activeNav}</h1><p className="subtitle">{activeNav === "Overview" ? "Here is a summary of your care today." : "Keep track of your health information in one place."}</p></div>
-      <button className="primary-button" onClick={onBook}><Icon name={canBookAppointment ? "plus" : "calendar"} size={17} /> {canBookAppointment ? "Book appointment" : "Manage appointment"}</button>
+      <div><p className="eyebrow">PATIENT PORTAL</p><h1>Hello, {patientName}.</h1><p className="subtitle">Here is what needs your attention today.</p></div>
+      <button className="primary-button" onClick={onBook}><Icon name={canBook ? "plus" : "calendar"} size={17} /> {canBook ? "Book appointment" : "Manage appointment"}</button>
     </div>
 
-    <section className="hero-card">
-      <div className="hero-copy">
-        <span className="status-pill"><i></i> {appointmentStatusLabel(appointmentStatus).toUpperCase()}</span>
-        <p className="hero-date">{hasActiveAppointment ? "July 24" : "Patient portal"}</p>
-        <h2>{hasActiveAppointment ? "Follow-up appointment" : appointmentStatus === "completed" ? "Visit completed" : appointmentStatus === "cancelled" ? "Appointment cancelled" : "No appointment scheduled"}</h2>
-        <p className="doctor"><span className="doctor-avatar">AC</span><span><strong>Dr. Ana Costa</strong><small>Primary Care · Room 204</small></span></p>
-      </div>
-      <div className="appointment-time">
-        <strong>{hasActiveAppointment ? formatAppointmentTime(appointmentTime) : appointmentStatus === "completed" ? "DONE" : "—"}</strong><span>{hasActiveAppointment ? "local time" : "book when ready"}</span>
-        <button onClick={onBook}>{canBookAppointment ? "Book now" : "View details"} <Icon name="arrow-right" size={13} /></button>
-      </div>
-      <div className="hero-decoration" aria-hidden="true"><i></i><b></b><em></em></div>
-    </section>
+    {sharedRecord && <SharedRecordNotice />}
+    <VisitStep appointmentStatus={appointmentStatus} busyAction={busyAction} onConfirm={onConfirm} onCheckIn={onCheckIn} />
+    <AppointmentHero demo={demo} onOpen={() => onGoTo("appointments")} />
 
-    <div className="section-heading"><div><h2>Quick actions</h2><p>What would you like to do?</p></div></div>
-    <section className="quick-grid">
-      <QuickCard color="blue" icon="calendar" title={canBookAppointment ? "Book an appointment" : "Manage appointment"} text={hasActiveAppointment ? `${appointmentStatusLabel(appointmentStatus)} · ${formatAppointmentTime(appointmentTime)}` : appointmentStatus === "cancelled" ? "Previous appointment cancelled" : appointmentStatus === "completed" ? "Previous visit completed" : "Choose the best date and time"} action={canBookAppointment ? "Book now" : appointmentStatus === "scheduled" ? "Reschedule or cancel" : "View status"} onClick={onBook} />
-      <QuickCard color="coral" icon="clipboard" title="Intake form" text={intakeComplete ? "Your answers are available to the clinic" : "Takes about 3 minutes"} action={intakeComplete ? "Review or update" : "Complete form"} onClick={onOpenIntake} done={intakeComplete} disabled={busy} />
-      <QuickCard color="mint" icon="pill" title="Request a refill" text={refillStatus === "approved" ? "Refill approved by the clinic" : refillStatus === "pending" ? "Under staff review" : refillStatus === "rejected" ? "The clinic declined the previous request" : "Request it quickly and securely"} action={refillStatus === "approved" ? "Approved" : refillStatus === "pending" ? "Under review" : refillStatus === "rejected" ? "Request again" : "Request refill"} onClick={onRequestRefill} done={refillStatus === "pending" || refillStatus === "approved"} disabled={busy || refillStatus === "pending" || refillStatus === "approved"} />
-    </section>
-
-    <section className="content-grid">
-      <div className="panel activity-panel">
-        <div className="panel-heading"><div><h2>Recent activity</h2><p>Your latest updates</p></div><button>View all</button></div>
-        <Activity icon="flask" color="green" title="Result available" text="Complete blood count" time="Today, 9:42 AM" action="View" onClick={onOpenLab} />
-        <Activity icon={refillStatus === "approved" ? "pill" : "clipboard"} color="purple" title={refillStatus === "approved" ? "Refill approved" : "Visit summary"} text={refillStatus === "approved" ? "Losartan 50 mg" : "July 12 appointment"} time={refillStatus === "approved" ? "Now" : "Jul 12, 4:20 PM"} action="Open" onClick={refillStatus === "approved" ? undefined : onOpenSummary} />
-        <Activity icon="mail" color="orange" title="New message" text="Care team" time="Jul 24, 9:10 AM" action="Reply" onClick={onOpenMessages} />
+    <div className="section-heading"><div><h2>Your care</h2><p>Every card here reflects your current state.</p></div></div>
+      <div className="quick-grid">
+        {intakeDue && <QuickCard color="coral" icon="clipboard" title="Pre-visit questions" text="Your care team reads this before the visit" action="Complete form" onClick={onOpenIntake} disabled={busyAction !== null} />}
+        <QuickCard color="mint" icon="pill" title="Request a refill" text={refillStatus === "approved" ? "Refill approved by the clinic" : refillStatus === "pending" ? "Under staff review" : refillStatus === "rejected" ? "The clinic declined the previous request" : "Ask the clinic to renew a medication"} action={refillStatus === "approved" ? "Approved" : refillStatus === "pending" ? "Under review" : refillStatus === "rejected" ? "Request again" : "Request refill"} onClick={onRequestRefill} done={refillStatus === "approved"} disabled={busyAction !== null || refillStatus === "pending" || refillStatus === "approved"} />
+        {intakeSubmission !== null && <QuickCard color="blue" icon="clipboard" title="Your answers" text={`Submitted ${intakeSubmission.submittedAt}`} action="Review or update" onClick={onOpenIntake} done disabled={busyAction !== null} />}
       </div>
-      <aside className="panel care-panel">
-        <div className="care-header"><span className="care-mark"><Icon name="heart" size={16} /></span><div><h2>Your care is on track</h2><p>Keep it up, Maria!</p></div></div>
-        <div className="progress-ring"><span>75<small>%</small></span></div>
-        <div className="care-copy"><strong>3 of 4 tasks completed</strong><p>Complete your form before your next appointment.</p></div>
-        <button onClick={onOpenIntake} disabled={busy}>{intakeComplete ? "Review answers" : "Continue task"} <Icon name="arrow-right" size={13} /></button>
-      </aside>
-    </section>
-    <p className="date-note">Demo data · {dateLabel}</p>
   </div>;
 }
 
-function StaffDashboard({
-  staffName,
-  appointmentBooked,
-  appointmentStatus,
-  appointmentTime,
-  intakeComplete,
-  intakeSubmission,
-  insurance,
-  refillStatus,
-  busy,
-  onApproveRefill,
-  onDeclineRefill,
-  onAdvanceAppointment,
-  onOpenSummary,
-}: {
-  staffName: string;
-  appointmentBooked: boolean;
-  appointmentStatus: AppointmentStatus;
-  appointmentTime: AppointmentTime;
-  intakeComplete: boolean;
-  intakeSubmission: IntakeSubmission | null;
-  insurance: InsuranceInfo;
-  refillStatus: RefillStatus;
-  busy: boolean;
-  onApproveRefill: () => void | Promise<unknown>;
-  onDeclineRefill: () => void | Promise<unknown>;
-  onAdvanceAppointment: (action: AppointmentAdvanceAction) => void | Promise<unknown>;
+function PatientAppointments({ sharedRecord, demo, busyAction, onBook, onConfirm, onCheckIn }: {
+  sharedRecord: boolean;
+  demo: DemoState;
+  busyAction: DemoStateAction | null;
+  onBook: () => void;
+  onConfirm: () => void | Promise<unknown>;
+  onCheckIn: () => void | Promise<unknown>;
+}) {
+  const { appointmentStatus, appointmentTime, appointmentProvider, appointmentSpecialty } = demo;
+  const hasAppointment = appointmentStatus !== "none";
+
+  return <div className="page-content">
+    <div className="welcome-row">
+      <div><p className="eyebrow">PATIENT PORTAL</p><h1>Appointments</h1><p className="subtitle">Your visits, and the step each one is waiting on.</p></div>
+    </div>
+
+    {sharedRecord && <SharedRecordNotice />}
+    <VisitStep appointmentStatus={appointmentStatus} busyAction={busyAction} onConfirm={onConfirm} onCheckIn={onCheckIn} />
+
+    {hasAppointment ? <section className="panel appointment-list" aria-label="Your appointments">
+      <div className="panel-heading"><div><h2>Friday, July 24</h2><p>One visit on file for this demo patient.</p></div></div>
+      <article className="appointment-item">
+        <div className="appointment-item-time"><strong>{formatAppointmentTime(appointmentTime)}</strong><small>clinic time</small></div>
+        <div>
+          <strong>{appointmentSpecialty ?? "Primary Care"} · Follow-up</strong>
+          <p>{appointmentProvider ?? "Dr. Ana Costa"} · Room 204</p>
+        </div>
+        <span className={`queue-status${appointmentStatus === "scheduled" ? " waiting" : ""}`}>{appointmentStatusLabel(appointmentStatus)}</span>
+        <button className="secondary-button" onClick={onBook}>Manage appointment</button>
+      </article>
+      <ol className="visit-timeline" aria-label="Visit progress">
+        {(["scheduled", "confirmed", "checked-in", "in-progress", "completed"] as const).map(step => {
+          const order = ["scheduled", "confirmed", "checked-in", "in-progress", "completed"];
+          const reached = order.indexOf(appointmentStatus) >= order.indexOf(step);
+          return <li key={step} className={reached ? "reached" : ""}>{appointmentStatusLabel(step)}</li>;
+        })}
+      </ol>
+    </section> : <section className="panel empty-panel" aria-label="Nothing booked"><p>You have no appointments booked. Booking one also unlocks the pre-visit questions.</p><button className="primary-button" onClick={onBook}><Icon name="plus" size={17} /> Book appointment</button></section>}
+  </div>;
+}
+
+function SharedRecordNotice() {
+  return <section className="panel shared-record-notice" aria-label="Shared demo record">
+    <span className="activity-icon coral"><Icon name="alert-circle" size={18} /></span>
+    <div>
+      <strong>You are looking at the shared demo record</strong>
+      <p>The clinical documents, messages, and workflow below belong to <b>Maria Lopez</b>, the fictional patient every demo account shares. Nothing here is yours, and nothing here is real.</p>
+    </div>
+  </section>;
+}
+
+function HealthRecord({ demo, sharedRecord, onOpenIntake, onOpenInsurance, onOpenLab, onOpenSummary }: {
+  demo: DemoState;
+  sharedRecord: boolean;
+  onOpenIntake: () => void;
+  onOpenInsurance: () => void;
+  onOpenLab: () => void;
   onOpenSummary: () => void;
 }) {
-  const [showAppointmentDetails, setShowAppointmentDetails] = useState(false);
-  const [showIntakeReview, setShowIntakeReview] = useState(false);
-  const [showPatientSearch, setShowPatientSearch] = useState(false);
+  const { intakeSubmission, insurance, appointmentStatus } = demo;
+  const intakeAvailable = ACTIVE_APPOINTMENT_STATUSES.includes(appointmentStatus);
+
+  return <div className="page-content">
+    <div className="welcome-row"><div><p className="eyebrow">PATIENT PORTAL</p><h1>Health record</h1><p className="subtitle">Forms, coverage, and clinical documents for the shared demo patient.</p></div></div>
+    {sharedRecord && <SharedRecordNotice />}
+    <div className="document-grid">
+      <article className="panel document-card">
+        <span className="activity-icon coral"><Icon name="clipboard" size={18} /></span>
+        <div><p className="eyebrow">BEFORE YOUR VISIT</p><h2>Pre-visit questions</h2><p>{!intakeAvailable ? (intakeSubmission !== null ? "Answers on file. Book your next visit to update them." : "Book an appointment to unlock this form.") : intakeSubmission !== null ? "Submitted and ready for staff review." : "Complete this before your next appointment."}</p>{intakeSubmission !== null && <small>Submitted {intakeSubmission.submittedAt}</small>}</div>
+        <button className="secondary-button" onClick={onOpenIntake} disabled={!intakeAvailable}>{intakeSubmission !== null ? "Review answers" : "Complete form"}</button>
+      </article>
+      <article className="panel document-card">
+        <span className="activity-icon purple"><Icon name="shield-check" size={18} /></span>
+        <div><p className="eyebrow">COVERAGE</p><h2>Insurance information</h2><p>{insurance.provider} · {insurance.planName}</p><small>Member {insurance.memberId} · Last update: {insurance.updatedAt}</small></div>
+        <button className="secondary-button" onClick={onOpenInsurance}>Update insurance</button>
+      </article>
+      <article className="panel document-card">
+        <span className="activity-icon green"><Icon name="flask" size={18} /></span>
+        <div><p className="eyebrow">LAB RESULT</p><h2>Complete blood count</h2><p>A routine blood test · Collected July 23 · Final</p><span className="review-status">All values in range</span></div>
+        <button className="secondary-button" onClick={onOpenLab}>View result</button>
+      </article>
+      <article className="panel document-card">
+        <span className="activity-icon orange"><Icon name="heart" size={18} /></span>
+        <div><p className="eyebrow">VISIT DOCUMENT</p><h2>Primary care summary</h2><p>July 12 appointment · Dr. Ana Costa</p><span className="review-status">Available</span></div>
+        <button className="secondary-button" onClick={onOpenSummary}>Open summary</button>
+      </article>
+    </div>
+  </div>;
+}
+
+function StaffToday({ staffName, demo, busyAction, onAdvanceAppointment, onOpenSummary, onGoTo }: {
+  staffName: string;
+  demo: DemoState;
+  busyAction: DemoStateAction | null;
+  onAdvanceAppointment: (action: AppointmentAdvanceAction) => void | Promise<unknown>;
+  onOpenSummary: () => void;
+  onGoTo: (id: NavId) => void;
+}) {
+  const [activeModal, setActiveModal] = useState<StaffModal>(null);
+  const closeModal = () => setActiveModal(null);
+  // Close this dialog before the parent opens the summary: two aria-modal
+  // dialogs mounted at once means two focus traps and two Escape listeners.
+  const openSummary = () => { setActiveModal(null); onOpenSummary(); };
+  const { appointmentStatus, appointmentTime, intakeSubmission, insurance, refillStatus } = demo;
+
   const portalAppointment: StaffAppointment = {
     time: formatAppointmentTime(appointmentTime),
     patient: "Maria Lopez",
@@ -823,33 +1060,60 @@ function StaffDashboard({
   const staffAppointments = appointmentVisible
     ? [...appointments.slice(0, 3), portalAppointment, ...appointments.slice(3)]
     : appointments;
-  const requestCount =
-    2 + Number(refillStatus === "pending") + Number(intakeComplete);
+  // Counted, not invented — but note the schedule is seeded with four fixture
+  // rows (see `appointments`), so "appointments today" cannot read below 4.
+  const pendingRefills = Number(refillStatus === "pending");
+  const formsReceived = Number(intakeSubmission !== null);
+  const openRequests = pendingRefills + formsReceived;
+  const awaitingArrival = staffAppointments.filter(
+    item => item.status === "In waiting room" || item.status === "Scheduled" || item.status === "Confirmed",
+  ).length;
 
   return <div className="page-content">
-    <div className="welcome-row"><div><p className="eyebrow">CLINIC DASHBOARD</p><h1>Good morning, {staffName}.</h1><p className="subtitle">Track today&apos;s schedule and requests that need attention.</p></div><button className="secondary-button" onClick={() => setShowPatientSearch(true)}><Icon name="search" size={16} /> Search patients</button></div>
-    <section className="metric-grid">
-      <Metric value={appointmentBooked ? "13" : "12"} label="Appointments today" detail={appointmentBooked ? "1 new from patient portal" : "4 waiting"} tone="blue" />
-      <Metric value={refillStatus === "pending" ? "3" : "2"} label="Pending refills" detail="Review requests" tone="coral" />
-      <Metric value={intakeComplete ? "6" : "5"} label="Forms received" detail={intakeComplete ? "1 new from patient portal" : "2 new today"} tone="mint" />
-    </section>
-    <section className="staff-layout">
+    <div className="welcome-row"><div><p className="eyebrow">CLINIC DASHBOARD</p><h1>Good morning, {staffName}.</h1><p className="subtitle">Track today&apos;s schedule and requests that need attention.</p></div><button className="secondary-button" onClick={() => setActiveModal("patient-search")}><Icon name="search" size={16} /> Search patients</button></div>
+    <div className="metric-grid">
+      <Metric value={String(staffAppointments.length)} label="Appointments today" detail={awaitingArrival === 1 ? "1 awaiting arrival" : `${awaitingArrival} awaiting arrival`} tone="blue" />
+      <Metric value={String(pendingRefills)} label="Refills to review" detail={pendingRefills === 0 ? "Nothing waiting" : "From the patient portal"} tone="coral" />
+      <Metric value={String(formsReceived)} label="Forms received" detail={formsReceived === 0 ? "Nothing waiting" : "From the patient portal"} tone="mint" />
+    </div>
+    <div className="staff-layout">
       <div className="panel schedule-panel">
-        <div className="panel-heading"><div><h2>Today&apos;s schedule</h2><p>Friday, July 24</p></div><button>View schedule</button></div>
-        {staffAppointments.map(item => <div className={`schedule-row${item.fromPatientPortal ? " newly-booked" : ""}`} key={`${item.time}-${item.patient}`}><strong>{item.time}</strong><span className="patient-avatar">{item.patient.split(" ").map(n => n[0]).join("")}</span><div><b>{item.patient}</b><small>{item.type}</small></div><span className={`queue-status ${item.status === "Waiting" ? "waiting" : ""}`}>{item.status}</span><button aria-label={item.fromPatientPortal ? "Review Maria Lopez's new appointment" : `Open ${item.patient}'s record`} onClick={item.fromPatientPortal ? () => setShowAppointmentDetails(true) : undefined}><Icon name="arrow-right" size={15} /></button></div>)}
+        <div className="panel-heading"><div><h2>Today&apos;s schedule</h2><p>Friday, July 24</p></div></div>
+        {staffAppointments.map(item => <div className={`schedule-row${item.fromPatientPortal ? " newly-booked" : ""}`} key={`${item.time}-${item.patient}`}><strong>{item.time}</strong><span className="patient-avatar">{item.patient.split(" ").map(n => n[0]).join("")}</span><div><b>{item.patient}</b><small>{item.type}</small></div><span className={`queue-status ${item.status === "In waiting room" ? "waiting" : ""}`}>{item.status}</span>{item.fromPatientPortal ? <button aria-label="Review Maria Lopez's new appointment" onClick={() => setActiveModal("appointment")}><Icon name="arrow-right" size={15} /></button> : <span />}</div>)}
       </div>
       <div className="panel request-panel">
-        <div className="panel-heading"><div><h2>Requests</h2><p>Need your attention</p></div><span className="count-badge">{requestCount}</span></div>
-        {refillStatus === "pending" && <div className="request-card highlighted"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · Losartan 50 mg</small></div><span>Now</span></div><p>Ongoing medication · Last refill 30 days ago.</p><div className="request-actions"><button className="reject" onClick={onDeclineRefill} disabled={busy}>Decline</button><button className="approve" onClick={onApproveRefill} disabled={busy}>Approve</button></div></div>}
-        {refillStatus === "rejected" && <div className="request-card highlighted"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · Losartan 50 mg</small></div><span>Reviewed</span></div><p>Request declined · The patient may submit another request.</p></div>}
-        {intakeComplete && <div className="request-card highlighted" aria-label="Maria Lopez submitted intake form"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Intake form · Patient portal</small></div><span>Now</span></div><p>Submitted for the July 24 follow-up appointment.</p><button className="text-action" onClick={() => setShowIntakeReview(true)}>Review form <Icon name="arrow-right" size={13} /></button></div>}
-        <div className="request-card"><div className="request-top"><span className="patient-avatar lavender">AC</span><div><strong>Alex Carter</strong><small>Intake form</small></div><span>12 min</span></div><button className="text-action">Review form <Icon name="arrow-right" size={13} /></button></div>
-        <div className="request-card"><div className="request-top"><span className="patient-avatar peach">PS</span><div><strong>Priya Shah</strong><small>Appointment change</small></div><span>28 min</span></div><button className="text-action">Open request <Icon name="arrow-right" size={13} /></button></div>
+        <div className="panel-heading"><div><h2>Requests</h2><p>Need your attention</p></div>{openRequests > 0 && <span className="count-badge">{openRequests}</span>}</div>
+        {openRequests === 0
+          ? <p className="empty-note">No open requests from the patient portal.</p>
+          : <><p className="empty-note">{openRequests === 1 ? "One request is" : `${openRequests} requests are`} waiting in Requests.</p><button className="secondary-button full" onClick={() => onGoTo("requests")}>Open requests <Icon name="arrow-right" size={13} /></button></>}
       </div>
+    </div>
+    {activeModal === "appointment" && <AppointmentReviewModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} appointmentProvider={demo.appointmentProvider} appointmentSpecialty={demo.appointmentSpecialty} busyAction={busyAction} onAdvance={onAdvanceAppointment} onOpenSummary={openSummary} onClose={() => closeModal()} />}
+    {activeModal === "patient-search" && <PatientSearchModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} intakeComplete={intakeSubmission !== null} refillStatus={refillStatus} insurance={insurance} onOpenSummary={openSummary} onClose={() => closeModal()} />}
+  </div>;
+}
+
+function StaffRequests({ demo, busyAction, onApproveRefill, onDeclineRefill }: {
+  demo: DemoState;
+  busyAction: DemoStateAction | null;
+  onApproveRefill: () => void | Promise<unknown>;
+  onDeclineRefill: () => void | Promise<unknown>;
+}) {
+  const [activeModal, setActiveModal] = useState<StaffModal>(null);
+  const closeModal = () => setActiveModal(null);
+  const { intakeSubmission, refillStatus } = demo;
+  const isEmpty = refillStatus === "none" && intakeSubmission === null;
+
+  return <div className="page-content">
+    <div className="welcome-row"><div><p className="eyebrow">CLINIC DASHBOARD</p><h1>Requests</h1><p className="subtitle">Items submitted from the patient portal that need a decision.</p></div></div>
+    <section className="panel request-panel" aria-label="Requests from the patient portal">
+      {isEmpty && <p className="empty-note">No open requests. Anything the patient submits appears here.</p>}
+      {refillStatus === "pending" && <div className="request-card highlighted"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · Losartan 50 mg (blood pressure medicine)</small></div><span>Now</span></div><div className="request-actions"><button className="reject" onClick={onDeclineRefill} disabled={busyAction !== null}>{busyAction === "decline-refill" ? "Declining…" : "Decline"}</button><button className="approve" onClick={onApproveRefill} disabled={busyAction !== null}>{busyAction === "approve-refill" ? "Approving…" : "Approve"}</button></div></div>}
+      {refillStatus === "approved" && <div className="request-card"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · Losartan 50 mg (blood pressure medicine)</small></div><span>Reviewed</span></div><p>Request approved · The patient can see the update in the portal.</p></div>}
+      {refillStatus === "rejected" && <div className="request-card"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · Losartan 50 mg (blood pressure medicine)</small></div><span>Reviewed</span></div><p>Request declined · The patient may submit another request.</p></div>}
+      {intakeSubmission !== null && <div className="request-card highlighted" aria-label="Maria Lopez submitted intake form"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Pre-visit questions · Patient portal</small></div><span>Now</span></div><p>Submitted {intakeSubmission.submittedAt}.</p><button className="text-action" onClick={() => setActiveModal("intake-review")}>Review form <Icon name="arrow-right" size={13} /></button></div>}
     </section>
-    {showAppointmentDetails && <AppointmentReviewModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} busy={busy} onAdvance={onAdvanceAppointment} onOpenSummary={onOpenSummary} onClose={() => setShowAppointmentDetails(false)} />}
-    {showIntakeReview && intakeSubmission && <IntakeReviewModal intakeSubmission={intakeSubmission} onClose={() => setShowIntakeReview(false)} />}
-    {showPatientSearch && <PatientSearchModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} intakeComplete={intakeComplete} refillStatus={refillStatus} insurance={insurance} onOpenSummary={onOpenSummary} onClose={() => setShowPatientSearch(false)} />}
+    {activeModal === "intake-review" && intakeSubmission && <IntakeReviewModal intakeSubmission={intakeSubmission} onClose={() => closeModal()} />}
   </div>;
 }
 
@@ -857,27 +1121,26 @@ function QuickCard({ color, icon, title, text, action, onClick, done = false, di
   return <button className="quick-card" onClick={onClick} disabled={disabled}><span className={`quick-icon ${color}`}><Icon name={done ? "check" : icon} size={20} /></span><span><strong>{title}</strong><small>{text}</small><b>{action} <Icon name="arrow-right" size={13} /></b></span></button>;
 }
 
-function Activity({ icon, color, title, text, time, action, onClick }: { icon: IconName; color: string; title: string; text: string; time: string; action: string; onClick?: () => void }) {
-  return <div className="activity-row"><span className={`activity-icon ${color}`}><Icon name={icon} size={15} /></span><div><strong>{title}</strong><p>{text}</p></div><time>{time}</time><button onClick={onClick}>{action}</button></div>;
-}
-
 function Metric({ value, label, detail, tone }: { value: string; label: string; detail: string; tone: string }) {
-  return <div className={`metric-card ${tone}`}><span className="metric-dot"></span><strong>{value}</strong><h3>{label}</h3><p>{detail} <Icon name="arrow-right" size={12} /></p></div>;
+  return <div className={`metric-card ${tone}`}><span className="metric-dot"></span><strong>{value}</strong><h2>{label}</h2><p>{detail}</p></div>;
 }
 
-function BookingModal({ appointmentStatus, appointmentTime, busy, onCancel, onClose, onSubmit }: { appointmentStatus: AppointmentStatus; appointmentTime: AppointmentTime; busy: boolean; onCancel: () => void | Promise<void>; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void> }) {
-  const canManage = appointmentStatus === "scheduled";
-  const canBook = ["none", "cancelled", "completed"].includes(appointmentStatus);
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="booking-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close" disabled={busy}><Icon name="close" size={18} /></button><p className="eyebrow">{canManage ? "MANAGE APPOINTMENT" : canBook ? "NEW APPOINTMENT" : "APPOINTMENT STATUS"}</p><h2 id="booking-title">{canManage ? "Reschedule or cancel" : canBook ? "Find a time" : appointmentStatusLabel(appointmentStatus)}</h2><p>{canManage || canBook ? "Choose the time that works best for you." : "The clinic has already started processing this visit, so changes are no longer available."}</p>{canManage || canBook ? <form onSubmit={onSubmit}><label>Specialty<select defaultValue="Primary Care"><option>Primary Care</option><option>Cardiology</option><option>Dermatology</option></select></label><label>Provider<select defaultValue="Dr. Ana Costa"><option>Dr. Ana Costa</option><option>Dr. John Lima</option></select></label><fieldset><legend>Available times · July 24</legend><div className="time-options"><label><input type="radio" name="time" value="09:00" defaultChecked={appointmentTime === "09:00"} />9:00 AM</label><label><input type="radio" name="time" value="10:30" defaultChecked={appointmentTime === "10:30"} />10:30 AM</label><label><input type="radio" name="time" value="15:00" defaultChecked={appointmentTime === "15:00"} />3:00 PM</label></div></fieldset><button className="primary-button full" type="submit" disabled={busy}>{busy ? "Saving…" : canManage ? "Save new time" : "Confirm appointment"}</button>{canManage && <button className="danger-button full" type="button" onClick={onCancel} disabled={busy}>Cancel appointment</button>}</form> : <><dl className="review-details"><div><dt>Date and time</dt><dd>July 24 · {formatAppointmentTime(appointmentTime)}</dd></div><div><dt>Provider</dt><dd>Dr. Ana Costa</dd></div><div><dt>Status</dt><dd><span className="review-status">{appointmentStatusLabel(appointmentStatus)}</span></dd></div></dl><button className="primary-button full" onClick={onClose}>Done</button></>}</div></div>;
+function BookingModal({ appointmentStatus, appointmentTime, appointmentProvider, appointmentSpecialty, busy, onCancel, onClose, onSubmit }: { appointmentStatus: AppointmentStatus; appointmentTime: AppointmentTime; appointmentProvider: AppointmentProvider | null; appointmentSpecialty: AppointmentSpecialty | null; busy: boolean; onCancel: () => void | Promise<void>; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void> }) {
+  const canManage =
+    appointmentStatus === "scheduled" || appointmentStatus === "confirmed";
+  const canBook = ["none", "cancelled", "completed", "no-show"].includes(appointmentStatus);
+  return <Modal confirmDiscard labelledBy="booking-title" closeDisabled={busy} onClose={onClose}><p className="eyebrow">{canManage ? "MANAGE APPOINTMENT" : canBook ? "NEW APPOINTMENT" : "APPOINTMENT STATUS"}</p><h2 id="booking-title">{canManage ? "Reschedule or cancel" : canBook ? "Find a time" : appointmentStatusLabel(appointmentStatus)}</h2><p>{canManage || canBook ? "Choose the time that works best for you." : "The clinic has already started processing this visit, so changes are no longer available."}</p>{canManage || canBook ? <form onSubmit={onSubmit}><label>Specialty<select name="specialty" defaultValue={appointmentSpecialty ?? "Primary Care"}><option>Primary Care</option><option>Cardiology</option><option>Dermatology</option></select></label><label>Provider<select name="provider" defaultValue={appointmentProvider ?? "Dr. Ana Costa"}><option>Dr. Ana Costa</option><option>Dr. John Lima</option></select></label><fieldset><legend>Available times · July 24</legend><div className="time-options"><label><input type="radio" name="time" value="09:00" defaultChecked={appointmentTime === "09:00"} />9:00 AM</label><label><input type="radio" name="time" value="10:30" defaultChecked={appointmentTime === "10:30"} />10:30 AM</label><label><input type="radio" name="time" value="15:00" defaultChecked={appointmentTime === "15:00"} />3:00 PM</label></div></fieldset><button className="primary-button full" type="submit" disabled={busy}>{busy ? "Saving…" : canManage ? "Save new time" : "Book this time"}</button></form> : <><dl className="review-details"><div><dt>Date and time</dt><dd>July 24 · {formatAppointmentTime(appointmentTime)}</dd></div><div><dt>Provider</dt><dd>{appointmentProvider ?? "Dr. Ana Costa"}</dd></div><div><dt>Status</dt><dd><span className="review-status">{appointmentStatusLabel(appointmentStatus)}</span></dd></div></dl><button className="primary-button full" onClick={onClose}>Done</button></>}{canManage && <div className="modal-danger-zone"><strong>No longer able to attend?</strong><button className="danger-button full" type="button" onClick={onCancel} disabled={busy}>{busy ? "Saving…" : "Cancel this appointment"}</button></div>}</Modal>;
 }
 
-function AppointmentReviewModal({ appointmentStatus, appointmentTime, busy, onAdvance, onOpenSummary, onClose }: { appointmentStatus: AppointmentStatus; appointmentTime: AppointmentTime; busy: boolean; onAdvance: (action: AppointmentAdvanceAction) => void | Promise<unknown>; onOpenSummary: () => void; onClose: () => void }) {
+function AppointmentReviewModal({ appointmentStatus, appointmentTime, appointmentProvider, appointmentSpecialty, busyAction, onAdvance, onOpenSummary, onClose }: { appointmentStatus: AppointmentStatus; appointmentTime: AppointmentTime; appointmentProvider: AppointmentProvider | null; appointmentSpecialty: AppointmentSpecialty | null; busyAction: DemoStateAction | null; onAdvance: (action: AppointmentAdvanceAction) => void | Promise<unknown>; onOpenSummary: () => void; onClose: () => void }) {
+  // Check-in belongs to the patient now; staff waits for arrival or records a no-show.
   const nextAction = {
-    scheduled: { action: "check-in-appointment" as const, label: "Check in patient" },
     "checked-in": { action: "start-appointment" as const, label: "Start visit" },
     "in-progress": { action: "complete-appointment" as const, label: "Complete visit" },
-  }[appointmentStatus as "scheduled" | "checked-in" | "in-progress"];
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="appointment-review-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close"><Icon name="close" size={18} /></button><p className="eyebrow">PATIENT PORTAL BOOKING</p><h2 id="appointment-review-title">Appointment details</h2><p>This appointment was booked by Maria Lopez and is part of the shared clinic schedule.</p><dl className="review-details"><div><dt>Patient</dt><dd>Maria Lopez</dd></div><div><dt>Date and time</dt><dd>July 24 · {formatAppointmentTime(appointmentTime)}</dd></div><div><dt>Provider</dt><dd>Dr. Ana Costa</dd></div><div><dt>Visit type</dt><dd>Primary Care · Follow-up</dd></div><div><dt>Status</dt><dd><span className="review-status">{appointmentStatusLabel(appointmentStatus)}</span></dd></div></dl>{nextAction && <button className="primary-button full" disabled={busy} onClick={() => void onAdvance(nextAction.action)}>{busy ? "Saving…" : nextAction.label}</button>}<button className="secondary-button full" onClick={onOpenSummary}>Open visit summary</button><button className="secondary-button full" onClick={onClose}>Close</button></div></div>;
+  }[appointmentStatus as "checked-in" | "in-progress"];
+  const canMarkNoShow =
+    appointmentStatus === "scheduled" || appointmentStatus === "confirmed";
+  return <Modal labelledBy="appointment-review-title" dismissOnBackdrop onClose={onClose}><p className="eyebrow">PATIENT PORTAL BOOKING</p><h2 id="appointment-review-title">Appointment details</h2><p>This appointment was booked by Maria Lopez and is part of the shared clinic schedule.</p><dl className="review-details"><div><dt>Patient</dt><dd>Maria Lopez</dd></div><div><dt>Date and time</dt><dd>July 24 · {formatAppointmentTime(appointmentTime)}</dd></div><div><dt>Provider</dt><dd>{appointmentProvider ?? "Dr. Ana Costa"}</dd></div><div><dt>Visit type</dt><dd>{(appointmentSpecialty ?? "Primary Care")} · Follow-up</dd></div><div><dt>Status</dt><dd><span className="review-status">{appointmentStatusLabel(appointmentStatus)}</span></dd></div></dl>{nextAction && <button className="primary-button full" disabled={busyAction !== null} onClick={() => void onAdvance(nextAction.action)}>{busyAction === nextAction.action ? "Saving…" : nextAction.label}</button>}{canMarkNoShow && <div className="modal-danger-zone"><strong>Patient did not arrive?</strong><button className="danger-button full" disabled={busyAction !== null} onClick={() => void onAdvance("no-show-appointment")}>{busyAction === "no-show-appointment" ? "Saving…" : "Mark as did not attend"}</button></div>}<button className="secondary-button full" onClick={onOpenSummary}>Open visit summary</button><button className="secondary-button full" onClick={onClose}>Close</button></Modal>;
 }
 
 function PatientSearchModal({ appointmentStatus, appointmentTime, intakeComplete, refillStatus, insurance, onOpenSummary, onClose }: { appointmentStatus: AppointmentStatus; appointmentTime: AppointmentTime; intakeComplete: boolean; refillStatus: RefillStatus; insurance: InsuranceInfo; onOpenSummary: () => void; onClose: () => void }) {
@@ -886,24 +1149,7 @@ function PatientSearchModal({ appointmentStatus, appointmentTime, intakeComplete
   const results = patientProfiles.filter(patient =>
     patient.name.toLowerCase().includes(query.trim().toLowerCase()),
   );
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal patient-search-modal" role="dialog" aria-modal="true" aria-labelledby="patient-search-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close"><Icon name="close" size={18} /></button>{selectedPatient ? <><button className="auth-back" type="button" onClick={() => setSelectedPatient(null)}><Icon name="arrow-left" size={14} /> Back to results</button><p className="eyebrow">PATIENT PROFILE</p><div className="patient-profile-heading"><span className="patient-avatar">{selectedPatient.initials}</span><div><h2 id="patient-search-title">{selectedPatient.name}</h2><p>{selectedPatient.email}</p></div></div><dl className="review-details"><div><dt>Date of birth</dt><dd>{selectedPatient.dateOfBirth}</dd></div><div><dt>Last visit</dt><dd>{selectedPatient.lastVisit}</dd></div>{selectedPatient.name === "Maria Lopez" && <><div><dt>Appointment</dt><dd>{appointmentStatusLabel(appointmentStatus)}{appointmentStatus !== "none" ? ` · ${formatAppointmentTime(appointmentTime)}` : ""}</dd></div><div><dt>Intake</dt><dd>{intakeComplete ? "Submitted" : "Not submitted"}</dd></div><div><dt>Refill</dt><dd>{refillStatus === "none" ? "No request" : refillStatus}</dd></div><div><dt>Insurance</dt><dd>{insurance.provider} · {insurance.planName}</dd></div></>}</dl>{selectedPatient.name === "Maria Lopez" && <button className="secondary-button full" onClick={onOpenSummary}>Open visit summary</button>}<p className="demo-disclaimer">Predictable demo profile · No real patient data</p></> : <><p className="eyebrow">PATIENT DIRECTORY</p><h2 id="patient-search-title">Search patients</h2><p>Find a predictable demo patient by name.</p><label className="patient-search-input"><span>Patient name</span><div><Icon name="search" size={17} /><input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder="Search by name" /></div></label><div className="patient-results" aria-live="polite">{results.map(patient => <button key={patient.email} onClick={() => setSelectedPatient(patient)}><span className="patient-avatar">{patient.initials}</span><span><strong>{patient.name}</strong><small>{patient.email}</small></span><Icon name="arrow-right" size={15} /></button>)}{results.length === 0 && <p>No patients found.</p>}</div></>} </div></div>;
-}
-
-function PatientForms({ intakeComplete, insurance, onOpenIntake, onOpenInsurance }: {
-  intakeComplete: boolean;
-  insurance: InsuranceInfo;
-  onOpenIntake: () => void;
-  onOpenInsurance: () => void;
-}) {
-  return <div className="page-content"><div className="welcome-row"><div><p className="eyebrow">PATIENT PORTAL</p><h1>Forms</h1><p className="subtitle">Review the information shared with your care team.</p></div></div><section className="document-grid"><article className="panel document-card"><span className="activity-icon purple"><Icon name="clipboard" size={18} /></span><div><p className="eyebrow">PRE-VISIT</p><h2>Intake form</h2><p>{intakeComplete ? "Submitted and ready for staff review." : "Complete this before your next appointment."}</p></div><button className="secondary-button" onClick={onOpenIntake}>{intakeComplete ? "Review answers" : "Complete form"}</button></article><article className="panel document-card"><span className="activity-icon green"><Icon name="shield-check" size={18} /></span><div><p className="eyebrow">COVERAGE</p><h2>Insurance information</h2><p>{insurance.provider} · {insurance.planName}<br />Member {insurance.memberId}</p><small>Last update: {insurance.updatedAt}</small></div><button className="secondary-button" onClick={onOpenInsurance}>Update insurance</button></article></section><p className="date-note">Predictable demo records · No real patient data</p></div>;
-}
-
-function ClinicalDocuments({ role, onOpenLab, onOpenSummary }: {
-  role: Role;
-  onOpenLab: () => void;
-  onOpenSummary: () => void;
-}) {
-  return <div className="page-content"><div className="welcome-row"><div><p className="eyebrow">{role === "patient" ? "PATIENT PORTAL" : "CLINIC DASHBOARD"}</p><h1>Results</h1><p className="subtitle">Review deterministic clinical documents for Maria Lopez.</p></div></div><section className="document-grid"><article className="panel document-card"><span className="activity-icon green"><Icon name="flask" size={18} /></span><div><p className="eyebrow">LAB RESULT</p><h2>Complete blood count</h2><p>Collected July 23 · Final</p><span className="review-status">All values in range</span></div><button className="secondary-button" onClick={onOpenLab}>View result</button></article><article className="panel document-card"><span className="activity-icon purple"><Icon name="clipboard" size={18} /></span><div><p className="eyebrow">VISIT DOCUMENT</p><h2>Primary care summary</h2><p>July 12 appointment · Dr. Ana Costa</p><span className="review-status">Available</span></div><button className="secondary-button" onClick={onOpenSummary}>Open summary</button></article></section><p className="date-note">Predictable clinical content · No real patient data</p></div>;
+  return <Modal labelledBy="patient-search-title" className="patient-search-modal" onClose={onClose}>{selectedPatient ? <><button className="auth-back" type="button" onClick={() => setSelectedPatient(null)}><Icon name="arrow-left" size={14} /> Back to results</button><p className="eyebrow">PATIENT PROFILE</p><div className="patient-profile-heading"><span className="patient-avatar">{selectedPatient.initials}</span><div><h2 id="patient-search-title">{selectedPatient.name}</h2><p>{selectedPatient.email}</p></div></div><dl className="review-details"><div><dt>Date of birth</dt><dd>{selectedPatient.dateOfBirth}</dd></div><div><dt>Last visit</dt><dd>{selectedPatient.lastVisit}</dd></div>{selectedPatient.name === "Maria Lopez" && <><div><dt>Appointment</dt><dd>{appointmentStatusLabel(appointmentStatus)}{appointmentStatus !== "none" ? ` · ${formatAppointmentTime(appointmentTime)}` : ""}</dd></div><div><dt>Intake</dt><dd>{intakeComplete ? "Submitted" : "Not submitted"}</dd></div><div><dt>Refill</dt><dd>{refillStatusLabel(refillStatus)}</dd></div><div><dt>Insurance</dt><dd>{insurance.provider} · {insurance.planName}</dd></div></>}</dl>{selectedPatient.name === "Maria Lopez" && <button className="secondary-button full" onClick={onOpenSummary}>Open visit summary</button>}<p className="demo-disclaimer">Sample data · Not a real patient</p></> : <><p className="eyebrow">PATIENT DIRECTORY</p><h2 id="patient-search-title">Search patients</h2><p>Find one of the five sample patients by name.</p><label className="patient-search-input"><span>Patient name</span><div><Icon name="search" size={17} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search by name" /></div></label><div className="patient-results" aria-live="polite">{results.map(patient => <button key={patient.email} onClick={() => setSelectedPatient(patient)}><span className="patient-avatar">{patient.initials}</span><span><strong>{patient.name}</strong><small>{patient.email}</small></span><Icon name="arrow-right" size={15} /></button>)}{results.length === 0 && <p>No patients found.</p>}</div></>} </Modal>;
 }
 
 function InsuranceModal({ insurance, busy, onClose, onSubmit }: {
@@ -912,21 +1158,30 @@ function InsuranceModal({ insurance, busy, onClose, onSubmit }: {
   onClose: () => void;
   onSubmit: (insurance: Omit<InsuranceInfo, "updatedAt">) => Promise<void>;
 }) {
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    void onSubmit({
+    const values = {
       provider: String(form.get("provider") ?? ""),
       planName: String(form.get("planName") ?? ""),
       memberId: String(form.get("memberId") ?? ""),
-    });
+    };
+    const found = validateText(values, { provider: 80, planName: 80, memberId: 40 });
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      focusFirstInvalid(event.currentTarget, Object.keys(found)[0]);
+      return;
+    }
+    void onSubmit(values);
   }
 
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="insurance-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close" disabled={busy}><Icon name="close" size={18} /></button><p className="eyebrow">COVERAGE DETAILS</p><h2 id="insurance-title">Update insurance</h2><p>Use fictional coverage information for this demonstration.</p><form onSubmit={submit}><label>Insurance provider<input name="provider" maxLength={80} defaultValue={insurance.provider} required /></label><label>Plan name<input name="planName" maxLength={80} defaultValue={insurance.planName} required /></label><label>Member ID<input name="memberId" maxLength={40} defaultValue={insurance.memberId} required /></label><p className="form-hint">All fields are required. Do not enter real policy information.</p><button className="primary-button full" type="submit" disabled={busy}>{busy ? "Saving…" : "Save insurance"}</button></form></div></div>;
+  return <Modal confirmDiscard labelledBy="insurance-title" closeDisabled={busy} onClose={onClose}><p className="eyebrow">COVERAGE DETAILS</p><h2 id="insurance-title">Update insurance</h2><p>Use fictional coverage information for this demonstration.</p><form onSubmit={submit} noValidate><label>Insurance provider<input name="provider" maxLength={80} defaultValue={insurance.provider} {...fieldProps("provider", errors)} /></label><FieldError name="provider" errors={errors} /><label>Plan name<input name="planName" maxLength={80} defaultValue={insurance.planName} {...fieldProps("planName", errors)} /></label><FieldError name="planName" errors={errors} /><label>Member ID<input name="memberId" maxLength={40} defaultValue={insurance.memberId} {...fieldProps("memberId", errors)} /></label><FieldError name="memberId" errors={errors} /><p className="form-hint">All fields are required. Do not enter real policy information.</p><button className="primary-button full" type="submit" disabled={busy}>{busy ? "Saving…" : "Save insurance"}</button></form></Modal>;
 }
 
 function LabResultModal({ onClose }: { onClose: () => void }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal clinical-modal" role="dialog" aria-modal="true" aria-labelledby="lab-result-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close"><Icon name="close" size={18} /></button><p className="eyebrow">FINAL RESULT</p><h2 id="lab-result-title">Complete blood count</h2><p>Collected July 23, 2026 at 8:15 AM · Ordered by Dr. Ana Costa</p><div className="lab-table" role="table" aria-label="Complete blood count values"><div role="row"><strong role="columnheader">Test</strong><strong role="columnheader">Result</strong><strong role="columnheader">Reference</strong></div><div role="row"><span role="cell">Hemoglobin</span><b role="cell">13.6 g/dL</b><span role="cell">12.0–15.5</span></div><div role="row"><span role="cell">White blood cells</span><b role="cell">6.4 K/uL</b><span role="cell">4.5–11.0</span></div><div role="row"><span role="cell">Platelets</span><b role="cell">248 K/uL</b><span role="cell">150–450</span></div></div><p className="demo-disclaimer">All values are fictional and provided only for QA training.</p><button className="primary-button full" onClick={onClose}>Done</button></div></div>;
+  return <Modal labelledBy="lab-result-title" className="clinical-modal" dismissOnBackdrop onClose={onClose}><p className="eyebrow">FINAL RESULT</p><h2 id="lab-result-title">Complete blood count</h2><p>A routine blood test measuring red cells, white cells, and platelets · Collected July 23, 2026 at 8:15 AM · Ordered by Dr. Ana Costa</p><table className="lab-table"><caption>Complete blood count values</caption><thead><tr><th scope="col">Test</th><th scope="col">Result</th><th scope="col">Normal range</th></tr></thead><tbody>{[["Hemoglobin", "13.6 g/dL", "12.0–15.5"], ["White blood cells", "6.4 K/uL", "4.5–11.0"], ["Platelets", "248 K/uL", "150–450"]].map(([test, result, range]) => <tr key={test}><th scope="row">{test}</th><td><b>{result}</b></td><td>{range}</td></tr>)}</tbody></table><p className="demo-disclaimer">All values are fictional and provided only for QA training.</p><button className="primary-button full" onClick={onClose}>Done</button></Modal>;
 }
 
 function downloadVisitSummary() {
@@ -938,6 +1193,7 @@ function downloadVisitSummary() {
     ["Visit type", "Primary care follow-up"],
     ["Assessment", "Blood pressure stable"],
     ["Plan", "Continue Losartan 50 mg and follow up in 3 months"],
+    ["Notice", "Fictional demo data for QA training. Not a medical record and not medical advice."],
   ];
   const csv = rows
     .map(row => row.map(value => `"${value.replaceAll("\"", "\"\"")}"`).join(","))
@@ -953,7 +1209,7 @@ function downloadVisitSummary() {
 }
 
 function VisitSummaryModal({ onClose }: { onClose: () => void }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal clinical-modal" role="dialog" aria-modal="true" aria-labelledby="visit-summary-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close"><Icon name="close" size={18} /></button><p className="eyebrow">VISIT SUMMARY</p><h2 id="visit-summary-title">Primary care follow-up</h2><p>Maria Lopez · July 12, 2026 · Dr. Ana Costa</p><dl className="review-details"><div><dt>Reason for visit</dt><dd>Routine follow-up</dd></div><div><dt>Assessment</dt><dd>Blood pressure stable</dd></div><div><dt>Medication</dt><dd>Continue Losartan 50 mg daily</dd></div><div><dt>Care plan</dt><dd>Continue home monitoring and follow up in 3 months</dd></div></dl><p className="demo-disclaimer">Predictable demo summary · No real patient data</p><button className="primary-button full" onClick={downloadVisitSummary}><Icon name="download" size={15} /> Download CSV</button><button className="secondary-button full" onClick={onClose}>Close</button></div></div>;
+  return <Modal labelledBy="visit-summary-title" className="clinical-modal" dismissOnBackdrop onClose={onClose}><p className="eyebrow">VISIT SUMMARY</p><h2 id="visit-summary-title">Primary care follow-up</h2><p>Maria Lopez · July 12, 2026 · Dr. Ana Costa</p><dl className="review-details"><div><dt>Reason for visit</dt><dd>Routine follow-up</dd></div><div><dt>Assessment</dt><dd>Blood pressure stable</dd></div><div><dt>Medication</dt><dd>Continue Losartan 50 mg daily</dd></div><div><dt>Care plan</dt><dd>Continue home monitoring and follow up in 3 months</dd></div></dl><p className="demo-disclaimer">Sample data · Not a real patient</p><button className="primary-button full" onClick={downloadVisitSummary}><Icon name="download" size={15} /> Download CSV</button><button className="secondary-button full" onClick={onClose}>Close</button></Modal>;
 }
 
 function IntakeFormModal({ intakeSubmission, busy, onClose, onSubmit }: {
@@ -962,27 +1218,51 @@ function IntakeFormModal({ intakeSubmission, busy, onClose, onSubmit }: {
   onClose: () => void;
   onSubmit: (intake: Omit<IntakeSubmission, "submittedAt">) => Promise<void>;
 }) {
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    void onSubmit({
-      reasonForVisit: String(form.get("reasonForVisit")) as IntakeSubmission["reasonForVisit"],
+    const values = {
       currentSymptoms: String(form.get("currentSymptoms") ?? ""),
       medicationChanges: String(form.get("medicationChanges") ?? ""),
       allergies: String(form.get("allergies") ?? ""),
+    };
+    const found = validateText(values, {
+      currentSymptoms: 240,
+      medicationChanges: 240,
+      allergies: 160,
+    });
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      focusFirstInvalid(event.currentTarget, Object.keys(found)[0]);
+      return;
+    }
+    void onSubmit({
+      reasonForVisit: String(form.get("reasonForVisit")) as IntakeSubmission["reasonForVisit"],
+      ...values,
     });
   }
 
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal intake-modal" role="dialog" aria-modal="true" aria-labelledby="intake-form-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close" disabled={busy}><Icon name="close" size={18} /></button><p className="eyebrow">{intakeSubmission ? "UPDATE INTAKE" : "PRE-VISIT INTAKE"}</p><h2 id="intake-form-title">{intakeSubmission ? "Review your answers" : "Tell us about your visit"}</h2><p>Your answers are shared with the clinic team for this QA demonstration.</p><form onSubmit={submit}><label>Reason for visit<select name="reasonForVisit" defaultValue={intakeSubmission?.reasonForVisit ?? "Routine follow-up"}><option>Routine follow-up</option><option>New symptoms</option><option>Medication review</option></select></label><label>Current symptoms<textarea name="currentSymptoms" maxLength={240} defaultValue={intakeSubmission?.currentSymptoms ?? ""} placeholder="Describe symptoms or enter None" required /></label><label>Medication changes<textarea name="medicationChanges" maxLength={240} defaultValue={intakeSubmission?.medicationChanges ?? ""} placeholder="Describe changes or enter None" required /></label><label>Allergies<input name="allergies" maxLength={160} defaultValue={intakeSubmission?.allergies ?? ""} placeholder="List allergies or enter None" required /></label><p className="form-hint">Use fictional information only. All fields are required.</p><button className="primary-button full" type="submit" disabled={busy}>{busy ? "Saving…" : intakeSubmission ? "Update form" : "Submit form"}</button></form></div></div>;
+  return <Modal confirmDiscard labelledBy="intake-form-title" className="intake-modal" closeDisabled={busy} onClose={onClose}><p className="eyebrow">{intakeSubmission ? "UPDATE INTAKE" : "PRE-VISIT INTAKE"}</p><h2 id="intake-form-title">{intakeSubmission ? "Review your answers" : "Tell us about your visit"}</h2><p>Your answers are shared with clinic staff for this QA demonstration.</p><form onSubmit={submit} noValidate><label>Reason for visit<select name="reasonForVisit" defaultValue={intakeSubmission?.reasonForVisit ?? "Routine follow-up"}><option>Routine follow-up</option><option>New symptoms</option><option>Medication review</option></select></label><label>Current symptoms<textarea name="currentSymptoms" maxLength={240} defaultValue={intakeSubmission?.currentSymptoms ?? ""} placeholder="Describe symptoms or enter None" {...fieldProps("currentSymptoms", errors)} /></label><FieldError name="currentSymptoms" errors={errors} /><label>Medication changes<textarea name="medicationChanges" maxLength={240} defaultValue={intakeSubmission?.medicationChanges ?? ""} placeholder="Describe changes or enter None" {...fieldProps("medicationChanges", errors)} /></label><FieldError name="medicationChanges" errors={errors} /><label>Allergies<input name="allergies" maxLength={160} defaultValue={intakeSubmission?.allergies ?? ""} placeholder="List allergies or enter None" {...fieldProps("allergies", errors)} /></label><FieldError name="allergies" errors={errors} /><p className="form-hint">Use fictional information only. All fields are required.</p><button className="primary-button full" type="submit" disabled={busy}>{busy ? "Saving…" : intakeSubmission ? "Update form" : "Submit form"}</button></form></Modal>;
 }
 
-function MessageCenter({ role, messages, busy, onSend }: {
+function MessageCenter({ role, sharedRecord, messages, busy, unread, onSend, onRead }: {
   role: Role;
+  sharedRecord: boolean;
   messages: DemoMessage[];
   busy: boolean;
+  unread: number;
   onSend: (messageBody: string) => Promise<boolean>;
+  onRead: () => void | Promise<unknown>;
 }) {
   const [draft, setDraft] = useState("");
+
+  // Opening the thread is what marks it read, so the badge reflects reality.
+  useEffect(() => {
+    if (unread > 0) void onRead();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unread]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -990,9 +1270,9 @@ function MessageCenter({ role, messages, busy, onSend }: {
     if (saved) setDraft("");
   }
 
-  return <div className="page-content message-page"><div className="welcome-row"><div><p className="eyebrow">{role === "patient" ? "PATIENT PORTAL" : "CLINIC DASHBOARD"}</p><h1>Messages</h1><p className="subtitle">A shared demo conversation between Maria Lopez and the care team.</p></div></div><section className="panel conversation-panel" aria-label="Care team conversation"><header><span className="patient-avatar">{role === "patient" ? "CT" : "ML"}</span><div><strong>{role === "patient" ? "Care team" : "Maria Lopez"}</strong><small>{role === "patient" ? "Primary Care" : "Patient portal"}</small></div><span className="conversation-status"><i></i> Demo thread</span></header><div className="message-thread" aria-live="polite">{messages.map(message => <article key={message.id} className={message.sender === role ? "message-bubble own" : "message-bubble"}><span>{message.sender === "patient" ? "Maria Lopez" : "Care team"}</span><p>{message.body}</p><time>{message.sentAt}</time></article>)}</div><form className="message-composer" onSubmit={submit}><label htmlFor="message-body">Reply to {role === "patient" ? "your care team" : "Maria Lopez"}</label><div><textarea id="message-body" value={draft} onChange={event => setDraft(event.target.value)} maxLength={500} placeholder="Write a demo message…" required /><button className="primary-button" type="submit" disabled={busy || !draft.trim()}>{busy ? "Sending…" : "Send message"}</button></div><small>{draft.length}/500 · No real patient information</small></form></section></div>;
+  return <div className="page-content message-page"><div className="welcome-row"><div><p className="eyebrow">{role === "patient" ? "PATIENT PORTAL" : "CLINIC STAFF"}</p><h1>Messages</h1><p className="subtitle">A shared demo conversation between Maria Lopez and the care team.</p></div></div>{sharedRecord && <SharedRecordNotice />}<section className="panel conversation-panel" aria-label="Care team conversation"><header><span className="patient-avatar">{role === "patient" ? "CT" : "ML"}</span><div><strong>{role === "patient" ? "Care team" : "Maria Lopez"}</strong><small>{role === "patient" ? "Primary Care" : "Patient portal"}</small></div><span className="conversation-status"><i></i> Sample conversation</span></header><div className="message-thread" aria-live="polite">{messages.length === 0 && <p className="message-empty">No messages yet. Anything you send appears here for the care team.</p>}{messages.map(message => <article key={message.id} className={message.sender === role ? "message-bubble own" : "message-bubble"}><span>{message.sender === "patient" ? "Maria Lopez" : "Care team"}</span><p>{message.body}</p><time>{message.sentAt}</time></article>)}</div><form className="message-composer" onSubmit={submit}><label htmlFor="message-body">Reply to {role === "patient" ? "your care team" : "Maria Lopez"}</label><div><textarea id="message-body" value={draft} onChange={event => setDraft(event.target.value)} maxLength={500} placeholder="Write a demo message…" required /><button className="primary-button" type="submit" disabled={busy || !draft.trim()}>{busy ? "Sending…" : "Send message"}</button></div><small>{draft.length}/500 · No real patient information</small></form></section></div>;
 }
 
 function IntakeReviewModal({ intakeSubmission, onClose }: { intakeSubmission: IntakeSubmission; onClose: () => void }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="intake-review-title" onMouseDown={event => event.stopPropagation()}><button className="modal-close" onClick={onClose} aria-label="Close"><Icon name="close" size={18} /></button><p className="eyebrow">SUBMITTED INTAKE</p><h2 id="intake-review-title">Maria Lopez</h2><p>Submitted through the patient portal on {intakeSubmission.submittedAt}.</p><dl className="review-details"><div><dt>Reason for visit</dt><dd>{intakeSubmission.reasonForVisit}</dd></div><div><dt>Current symptoms</dt><dd>{intakeSubmission.currentSymptoms}</dd></div><div><dt>Medication changes</dt><dd>{intakeSubmission.medicationChanges}</dd></div><div><dt>Allergies</dt><dd>{intakeSubmission.allergies}</dd></div><div><dt>Submission status</dt><dd><span className="review-status">Complete</span></dd></div></dl><p className="demo-disclaimer">Predictable demo content · No real patient data</p><button className="primary-button full" onClick={onClose}>Done</button></div></div>;
+  return <Modal labelledBy="intake-review-title" dismissOnBackdrop onClose={onClose}><p className="eyebrow">SUBMITTED INTAKE</p><h2 id="intake-review-title">Maria Lopez</h2><p>Submitted through the patient portal on {intakeSubmission.submittedAt}.</p><dl className="review-details"><div><dt>Reason for visit</dt><dd>{intakeSubmission.reasonForVisit}</dd></div><div><dt>Current symptoms</dt><dd>{intakeSubmission.currentSymptoms}</dd></div><div><dt>Medication changes</dt><dd>{intakeSubmission.medicationChanges}</dd></div><div><dt>Allergies</dt><dd>{intakeSubmission.allergies}</dd></div><div><dt>Submission status</dt><dd><span className="review-status">Complete</span></dd></div></dl><p className="demo-disclaimer">Sample data · Not a real patient</p><button className="primary-button full" onClick={onClose}>Done</button></Modal>;
 }
