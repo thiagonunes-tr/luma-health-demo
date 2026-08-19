@@ -9,8 +9,8 @@
 
 Luma Health is an English-language healthcare portal demo. It provides two visual experiences:
 
-- A patient portal with appointment booking, an intake-form action, refill requests, recent activity, and care progress.
-- A clinic staff dashboard with schedule metrics, patient requests, and refill approval.
+- A patient portal with appointment booking, an intake-form action, per-medication refill requests, lab results the patient acknowledges by opening, and a fictional statement they can pay.
+- A clinic staff dashboard with schedule metrics, patient requests, and per-medication refill approval.
 
 The project is intentionally a demonstration environment. It does not contain real patient data, does not implement a complete healthcare workflow, and must not be treated as a production medical system.
 
@@ -271,9 +271,7 @@ Contains one global row with ID `global`. `state_json` currently stores:
   "appointmentTime": "10:30",
   "appointmentProvider": null,
   "appointmentSpecialty": null,
-  "intakeComplete": false,
   "intakeSubmission": null,
-  "refillStatus": "none",
   "messages": ["Two deterministic starter messages"],
   "lastRead": { "patient": null, "staff": null },
   "insurance": {
@@ -281,19 +279,25 @@ Contains one global row with ID `global`. `state_json` currently stores:
     "planName": "Silver Care",
     "memberId": "HF-2048",
     "updatedAt": "Initial demo record"
-  }
+  },
+  "medications": ["Three, each with its own id, dose, instructions, lastFilled and refillStatus"],
+  "results": ["Two, each with its own id, plainName, summary, status and values"],
+  "statement": { "id": "statement-jul", "amount": "$40.00", "dueOn": "August 12, 2026", "status": "unpaid" }
 }
 ```
 
 This state is global, not per user. A change made by one signed-in user is visible to other signed-in users after they reload the state.
 
-`refillStatus` supports `none`, `pending`, `approved`, and `rejected`.
+Every medication carries its own `refillStatus`, which supports `none`, `pending`, `approved`, and `rejected`. There is no state-wide refill field: a request that did not name a medication could not be shown next to the medication it was for, which is why `medicationId` is required and its absence is a `400`.
+
+Rows written before `appointmentBooked`, `intakeComplete` and the state-wide `refillStatus` were dropped can still be in D1 until the next reset. `getDemoState` reads all three as a migration path — a legacy pending refill is attached to the first medication so it does not vanish from the staff queue — and never writes them back, so the API response carries only the documented fields.
 
 The employee dashboard consumes every workflow field:
 
 - Appointment fields add Maria Lopez's selected time and lifecycle status to the clinic schedule and patient profile.
-- `intakeSubmission` stores the patient's reason, symptoms, medication changes, allergies, and deterministic submission time. `intakeComplete` remains as a compatibility/status flag.
-- `refillStatus` controls the staff review card and the status later shown to the patient.
+- `intakeSubmission` stores the patient's reason, symptoms, medication changes, allergies, and deterministic submission time. It is the only intake field; `intakeComplete` was removed because it only ever meant `intakeSubmission !== null`.
+- `medications` drives both portals: the patient's Medications destination requests a refill for one named medication, and the staff Requests queue renders one review card per medication that is pending.
+- `results` and `statement` are patient-owned. Opening a result is what marks it `viewed`, so there is no separate "mark as read" control; the statement pays once. Staff can see both summarised in Maria Lopez's profile but cannot act on either.
 - `messages` stores the shared patient/care-team thread. Sender identity is derived from the authenticated session.
 - `lastRead` stores the id of the last message each role has read, so the navigation badge can show an unread count instead of the thread length. `mark-messages-read` updates only the calling role's entry, and a marker pointing at a message that no longer exists is discarded on read.
 - `appointmentProvider` and `appointmentSpecialty` store the choices made in the booking form. They are cleared on cancellation and are `null` before the first booking.
@@ -415,7 +419,7 @@ Requires a valid session. Applies the reset check and returns the current global
 
 Requires a valid session and accepts one role-authorized action:
 
-- Patient: `book-appointment`, `confirm-appointment`, `reschedule-appointment`, `cancel-appointment`, `check-in-appointment`, `submit-intake`, `complete-intake` (legacy compatibility), `send-message`, `mark-messages-read`, `update-insurance`, `request-refill`
+- Patient: `book-appointment`, `confirm-appointment`, `reschedule-appointment`, `cancel-appointment`, `check-in-appointment`, `submit-intake`, `complete-intake` (legacy compatibility), `send-message`, `mark-messages-read`, `update-insurance`, `request-refill`, `acknowledge-result`, `pay-statement`
 - Staff: `start-appointment`, `complete-appointment`, `no-show-appointment`, `send-message`, `mark-messages-read`, `approve-refill`, `decline-refill`
 
 The appointment lifecycle is `none → scheduled → confirmed → checked-in → in-progress → completed`, with `cancelled` reachable by the patient from `scheduled` or `confirmed` and `no-show` reachable by staff from the same two statuses. Two rules are deliberate: rescheduling returns a confirmed appointment to `scheduled`, so it must be confirmed again; and `check-in-appointment` belongs to the **patient** and requires `confirmed`, mirroring how real portals work.
@@ -424,7 +428,8 @@ Example:
 
 ```json
 {
-  "action": "request-refill"
+  "action": "request-refill",
+  "medicationId": "med-losartan"
 }
 ```
 
@@ -678,7 +683,7 @@ For deterministic setup, negative-path expectations, cross-role sequencing, and 
 - Registered personal accounts cannot bypass MFA.
 - The code expires after ten minutes.
 - Successful verification creates a session.
-- Appointment, intake, and refill actions update the UI.
+- Appointment, intake, refill, result and statement actions update the UI.
 - Patients can book, reschedule, and cancel while the appointment is still scheduled or confirmed.
 - Patients confirm attendance from the portal, then check themselves in. Check-in before confirming returns HTTP `409`.
 - Pre-visit questions are refused with HTTP `409` when there is no appointment in `scheduled`, `confirmed`, or `checked-in`.
@@ -707,7 +712,7 @@ For deterministic setup, negative-path expectations, cross-role sequencing, and 
 - Patient search returns predictable profiles and a deterministic empty state.
 - Staff can start and complete a visit the patient has already checked into, and can record a no-show while the appointment is still awaiting arrival.
 - Staff cannot check a patient in; that action returns HTTP `403` for the employee role.
-- Staff can observe, approve, or decline a pending refill in the shared state.
+- Staff can observe, approve, or decline each pending refill in the shared state, one medication at a time.
 - Staff metrics, schedule, and request counts reflect the patient's persisted appointment and intake actions.
 
 ### Reset
@@ -784,8 +789,8 @@ rule — but implementing it was left out of the redesign. Likewise `prefers-con
 ### UI scope
 
 - Dates, clinicians, patients, clinical documents, and directory entries are deterministic fictional content by design. Staff metrics are counted from the shared state, not fabricated.
-- Appointment, intake, insurance, messaging, refill, patient-search, lab-result, and visit-summary flows are implemented for QA automation, but do not integrate with real clinical systems.
-- A patient signed in with a personal account sees the shared demo patient's clinical record, and is told so by a notice on Home and Health record. The record itself is Maria Lopez's; personal accounts have no clinical data of their own.
+- Appointment, intake, insurance, messaging, refill, billing, patient-search, lab-result, and visit-summary flows are implemented for QA automation, but do not integrate with real clinical systems. No money moves when a statement is paid, and no pharmacy receives an approved refill.
+- A patient signed in with a personal account sees the shared demo patient's clinical record, and is told so by a notice on every patient destination. The record itself is Maria Lopez's; personal accounts have no clinical data of their own.
 - Native iOS and Android applications are explicitly out of scope; responsive mobile web is the accepted mobile test surface.
 
 ### Test suite

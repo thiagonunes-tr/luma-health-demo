@@ -263,14 +263,11 @@ The state is global and shared by every session:
 
 ```json
 {
-  "appointmentBooked": false,
   "appointmentStatus": "none",
   "appointmentTime": "10:30",
   "appointmentProvider": null,
   "appointmentSpecialty": null,
-  "intakeComplete": false,
   "intakeSubmission": null,
-  "refillStatus": "none",
   "messages": [
     {
       "id": "message-1",
@@ -285,59 +282,117 @@ The state is global and shared by every session:
       "sentAt": "Jul 24 · 9:18 AM"
     }
   ],
-  "lastRead": { "patient": null, "staff": null },
+  "lastRead": {
+    "patient": null,
+    "staff": null
+  },
   "insurance": {
     "provider": "HealthFirst Demo",
     "planName": "Silver Care",
     "memberId": "HF-2048",
     "updatedAt": "Initial demo record"
+  },
+  "medications": [
+    {
+      "id": "med-losartan",
+      "name": "Losartan 50 mg",
+      "dose": "One tablet each morning",
+      "instructions": "Blood pressure medicine. Take with water.",
+      "lastFilled": "June 24, 2026",
+      "refillStatus": "none"
+    },
+    {
+      "id": "med-metformin",
+      "name": "Metformin 500 mg",
+      "dose": "One tablet twice a day",
+      "instructions": "Blood sugar medicine. Take with food.",
+      "lastFilled": "July 2, 2026",
+      "refillStatus": "none"
+    },
+    {
+      "id": "med-atorvastatin",
+      "name": "Atorvastatin 20 mg",
+      "dose": "One tablet at night",
+      "instructions": "Cholesterol medicine.",
+      "lastFilled": "May 30, 2026",
+      "refillStatus": "none"
+    }
+  ],
+  "results": [
+    {
+      "id": "result-cbc",
+      "name": "Complete blood count",
+      "plainName": "A routine blood test measuring red cells, white cells and platelets",
+      "collectedAt": "July 23, 2026 at 8:15 AM",
+      "summary": "All values in range",
+      "status": "new",
+      "values": [
+        {
+          "test": "Hemoglobin",
+          "result": "13.6 g/dL",
+          "range": "12.0–15.5"
+        },
+        {
+          "test": "White blood cells",
+          "result": "6.4 K/uL",
+          "range": "4.5–11.0"
+        },
+        {
+          "test": "Platelets",
+          "result": "248 K/uL",
+          "range": "150–450"
+        }
+      ]
+    },
+    {
+      "id": "result-lipids",
+      "name": "Lipid panel",
+      "plainName": "A blood test measuring cholesterol and related fats",
+      "collectedAt": "July 23, 2026 at 8:15 AM",
+      "summary": "One value above range",
+      "status": "new",
+      "values": [
+        {
+          "test": "Total cholesterol",
+          "result": "212 mg/dL",
+          "range": "under 200"
+        },
+        {
+          "test": "HDL",
+          "result": "58 mg/dL",
+          "range": "over 40"
+        },
+        {
+          "test": "Triglycerides",
+          "result": "129 mg/dL",
+          "range": "under 150"
+        }
+      ]
+    }
+  ],
+  "statement": {
+    "id": "statement-jul",
+    "description": "Primary care follow-up · July 12, 2026",
+    "amount": "$40.00",
+    "dueOn": "August 12, 2026",
+    "status": "unpaid"
   }
 }
 ```
 
-`appointmentStatus` may be `none`, `scheduled`, `checked-in`, `in-progress`, `completed`, or `cancelled`. `appointmentTime` may be `09:00`, `10:30`, or `15:00`.
+`appointmentStatus` may be `none`, `scheduled`, `confirmed`, `checked-in`, `in-progress`, `completed`, `cancelled`, or `no-show`. `appointmentTime` may be `09:00`, `10:30`, or `15:00`.
 
-`refillStatus` may be `none`, `pending`, `approved`, or `rejected`.
+Each medication carries its own `refillStatus`, which may be `none`, `pending`, `approved`, or `rejected`. There is no state-wide refill field: a refill request names the medication it is for, so three medications can be at three different points at once.
+
+Each lab result carries its own `status`, either `new` or `viewed`. Opening a result is what marks it `viewed`.
+
+`statement.status` is `unpaid` or `paid`. `statement.amount` is a display string; this demo performs no arithmetic on money.
 
 ### `GET /api/demo-state`
 
 Requires a valid session and returns:
 
-```json
-{
-  "state": {
-    "appointmentBooked": false,
-    "appointmentStatus": "none",
-    "appointmentTime": "10:30",
-    "appointmentProvider": null,
-    "appointmentSpecialty": null,
-    "intakeComplete": false,
-    "intakeSubmission": null,
-    "refillStatus": "none",
-    "messages": [
-      {
-        "id": "message-1",
-        "sender": "staff",
-        "body": "Hi Maria, please complete your intake form before your next visit.",
-        "sentAt": "Jul 24 · 9:10 AM"
-      },
-      {
-        "id": "message-2",
-        "sender": "patient",
-        "body": "Thank you. I’ll complete it today.",
-        "sentAt": "Jul 24 · 9:18 AM"
-      }
-    ],
-    "lastRead": { "patient": null, "staff": null },
-    "insurance": {
-      "provider": "HealthFirst Demo",
-      "planName": "Silver Care",
-      "memberId": "HF-2048",
-      "updatedAt": "Initial demo record"
-    }
-  }
-}
-```
+The response is `{ "state": … }`, wrapping exactly the object documented above. It is not reproduced here so that the two cannot drift apart.
 
 An anonymous request returns HTTP `401`.
 
@@ -359,7 +414,9 @@ Patient actions:
 | `send-message` | Appends a patient message to the shared conversation |
 | `mark-messages-read` | Records the last message the patient has read, which drives the unread badge |
 | `update-insurance` | Validates and persists the patient's coverage fields |
-| `request-refill` | Changes `none` or `rejected` to `pending` |
+| `request-refill` | Moves one medication from `none` or `rejected` to `pending`. Requires `medicationId` |
+| `acknowledge-result` | Marks one lab result `viewed`. Requires `resultId`. Repeating it is a no-op, not a conflict |
+| `pay-statement` | Marks the statement `paid`. No money moves |
 
 Booking and rescheduling requests include `appointmentTime`:
 
@@ -423,30 +480,30 @@ Employee actions:
 | `no-show-appointment` | Changes `scheduled` or `confirmed` to `no-show` |
 | `send-message` | Appends a staff reply to the shared conversation |
 | `mark-messages-read` | Records the last message the employee has read |
-| `approve-refill` | Changes `pending` to `approved` |
-| `decline-refill` | Changes `pending` to `rejected` |
+| `approve-refill` | Moves one medication from `pending` to `approved`. Requires `medicationId` |
+| `decline-refill` | Moves one medication from `pending` to `rejected`. Requires `medicationId` |
 
 Example:
 
 ```json
 {
-  "action": "request-refill"
+  "action": "request-refill",
+  "medicationId": "med-losartan"
 }
 ```
+
+`medicationId` and `resultId` must match an entry already in the state. An action that omits the id, or names one that is not on file, returns `400` rather than `409`: the request is malformed, not out of sequence.
 
 Successful response:
 
 ```json
 {
   "state": {
-    "appointmentBooked": false,
     "appointmentStatus": "none",
     "appointmentTime": "10:30",
     "appointmentProvider": null,
     "appointmentSpecialty": null,
-    "intakeComplete": false,
     "intakeSubmission": null,
-    "refillStatus": "pending",
     "messages": ["Default two-message thread omitted for brevity"],
     "lastRead": { "patient": null, "staff": null },
     "insurance": {
@@ -454,10 +511,31 @@ Successful response:
       "planName": "Silver Care",
       "memberId": "HF-2048",
       "updatedAt": "Initial demo record"
+    },
+    "medications": [
+      {
+        "id": "med-losartan",
+        "name": "Losartan 50 mg",
+        "dose": "One tablet each morning",
+        "instructions": "Blood pressure medicine. Take with water.",
+        "lastFilled": "June 24, 2026",
+        "refillStatus": "pending"
+      },
+      "The other two medications are unchanged, each with its own refillStatus"
+    ],
+    "results": ["Two lab results, each with its own status and values"],
+    "statement": {
+      "id": "statement-jul",
+      "description": "Primary care follow-up · July 12, 2026",
+      "amount": "$40.00",
+      "dueOn": "August 12, 2026",
+      "status": "unpaid"
     }
   }
 }
 ```
+
+Only the medication named by `medicationId` changes. That is the point of the field: the other two stay exactly as they were.
 
 | Status | Meaning |
 | --- | --- |
@@ -467,7 +545,7 @@ Successful response:
 | `403` | Action is not allowed for the current role |
 | `409` | Transition is incompatible with the current state |
 
-Invalid intake, insurance, or message payloads return HTTP `400`. Examples of conflicts include advancing an appointment out of sequence, checking in before the appointment is confirmed, confirming an appointment that is not `scheduled`, marking a no-show for a patient who already arrived, changing an appointment after check-in, submitting pre-visit questions with no active appointment, requesting an already pending or approved refill, and attempting to approve or decline a refill that is not pending.
+Invalid intake, insurance, or message payloads return HTTP `400`. Examples of conflicts include advancing an appointment out of sequence, checking in before the appointment is confirmed, confirming an appointment that is not `scheduled`, marking a no-show for a patient who already arrived, changing an appointment after check-in, submitting pre-visit questions with no active appointment, requesting a refill for a medication that is already pending or approved, attempting to approve or decline a refill that is not pending, and paying a statement that is already paid. A refill action that omits `medicationId`, or an `acknowledge-result` that omits `resultId`, returns `400` instead.
 
 ### `DELETE /api/demo-state`
 
@@ -476,21 +554,36 @@ Restores the default state without removing registered users:
 ```json
 {
   "state": {
-    "appointmentBooked": false,
     "appointmentStatus": "none",
     "appointmentTime": "10:30",
     "appointmentProvider": null,
     "appointmentSpecialty": null,
-    "intakeComplete": false,
     "intakeSubmission": null,
-    "refillStatus": "none",
-    "messages": ["The deterministic two-message thread is restored"],
-    "lastRead": { "patient": null, "staff": null },
+    "messages": [
+      "The deterministic two-message thread is restored"
+    ],
+    "lastRead": {
+      "patient": null,
+      "staff": null
+    },
     "insurance": {
       "provider": "HealthFirst Demo",
       "planName": "Silver Care",
       "memberId": "HF-2048",
       "updatedAt": "Initial demo record"
+    },
+    "medications": [
+      "Three medications, each with its own refillStatus"
+    ],
+    "results": [
+      "Two lab results, each with its own status and values"
+    ],
+    "statement": {
+      "id": "statement-jul",
+      "description": "Primary care follow-up · July 12, 2026",
+      "amount": "$40.00",
+      "dueOn": "August 12, 2026",
+      "status": "unpaid"
     }
   }
 }
@@ -517,7 +610,7 @@ curl --fail-with-body \
   --cookie /tmp/luma-health-demo.cookies \
   --request PATCH \
   --header "Content-Type: application/json" \
-  --data '{"action":"request-refill"}' \
+  --data '{"action":"request-refill","medicationId":"med-losartan"}' \
   http://localhost:3000/api/demo-state
 ```
 

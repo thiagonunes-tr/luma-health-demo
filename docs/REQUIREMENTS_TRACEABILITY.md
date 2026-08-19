@@ -32,7 +32,7 @@ The strongest areas are:
 - A believable English-language health portal.
 - A single responsive web experience for desktop and mobile browsers.
 - Separate patient and employee experiences.
-- Appointment booking, structured intake, shared messaging, refill request, and refill approval state changes.
+- Appointment booking, structured intake, shared messaging, per-medication refill request and approval, lab-result acknowledgement, and statement payment state changes.
 - Predictable demo data and simple business logic.
 - Password login followed by a real email verification code, with an explicit bypass for the two fixed demo accounts.
 - Persistent demo users and an automatically resetting shared demo state.
@@ -51,15 +51,15 @@ The project should therefore be described as a **complete QA-training demo for t
 The original health-tech story says:
 
 - A patient books appointments, fills forms, views results, and sends requests from web or mobile.
-- Clinic staff handles scheduling, patient records, refill requests, and intake review from an employee application.
+- Clinic staff handles scheduling, patient records, per-medication refill requests, and intake review from an employee application.
 
 The current product demonstrates the main cross-role story:
 
 1. A patient signs in and confirms an email verification code.
-2. The patient books, reschedules, or cancels an appointment; completes intake; updates insurance; submits a refill request; and messages the clinic.
+2. The patient books, reschedules, or cancels an appointment; completes intake; updates insurance; requests a refill for a named medication; opens their lab results; pays a statement; and messages the clinic.
 3. The shared demo state is stored by the Cloudflare API.
 4. An employee signs in through the employee web experience.
-5. The employee searches patients, reviews the clinic schedule and intake, advances the visit lifecycle, replies to messages, and approves or declines a refill request.
+5. The employee searches patients, reviews the clinic schedule and intake, advances the visit lifecycle, replies to messages, and approves or declines each pending refill.
 6. The patient observes the shared updates and can review lab results, visit summaries, and a deterministic CSV export.
 
 This is a complete, deterministic implementation of the accepted cross-role QA-training story.
@@ -83,20 +83,21 @@ Desktop web and mobile web are covered. The employee workflow is covered through
 | --- | --- | --- | --- |
 | Book appointment | The patient selects an available time, books, reschedules, or cancels, and sees the shared lifecycle status. | **Implemented** | Appointment actions persist selected time and status through `/api/demo-state`. |
 | Fill intake form | The patient completes, reviews, and updates a four-field intake form. Staff sees the submitted answers. | **Implemented** | `submit-intake` validates and persists structured content through `/api/demo-state`. |
-| View lab results | The patient can open a CBC detail view with three deterministic values and reference ranges. | **Implemented** | Results navigation and recent activity both open `LabResultModal`. |
+| View lab results | The patient can open each of two deterministic results — a complete blood count and a lipid panel — with three values and reference ranges apiece. Opening a result is what marks it read, so the unread count on Home is state-derived. | **Implemented** | `results` in the shared state drives the Health record cards and `LabResultModal`; `acknowledge-result` persists the transition from `new` to `viewed`. |
 | Update insurance information | The patient can review and update provider, plan, and member ID. | **Implemented** | `update-insurance` validates and persists coverage in the shared state. |
 | Message provider | Patient and staff share a persisted conversation and can append replies. | **Implemented** | `send-message` derives the sender from the session and validates a 500-character body. |
-| Request prescription refill | The patient can submit a refill request and see pending, approved, or rejected status. A rejected request can be submitted again. | **Implemented** | Role-authorized actions persist through `/api/demo-state`; shared state uses `refillStatus`. |
+| Request prescription refill | The patient sees the three medications they take and can request a refill for a named one, then see that medication's own pending, approved, or declined status. A declined request can be submitted again. One medication's outcome does not affect the others. | **Implemented** | The Medications destination renders `medications` from the shared state; `request-refill` requires `medicationId` and rejects a request that names no medication with `400`. |
+| Pay a statement | The patient can see a fictional statement with an amount and due date, and settle it once. | **Implemented** | `statement` in the shared state; `pay-statement` is patient-only and returns `409` on a second attempt. No money moves. |
 | View visit summary | Patient and staff can open a deterministic primary-care visit summary. | **Implemented** | Results, recent activity, appointment review, and patient profile expose `VisitSummaryModal`. |
 
 ## 7. Employee functionality
 
 | Original requirement | Current implementation | Status | Evidence and notes |
 | --- | --- | --- | --- |
-| Search patient | Staff can filter a deterministic directory, open a patient profile, inspect shared state, and verify an empty result. | **Implemented** | `PatientSearchModal` exposes five fictional profiles; Maria reflects the current appointment, intake, and refill state. |
+| Search patient | Staff can filter a deterministic directory, open a patient profile, inspect shared state, and verify an empty result. | **Implemented** | `PatientSearchModal` exposes five fictional profiles; Maria reflects the current appointment, intake, insurance, refill, lab-result and billing state. |
 | Review appointment queue | The clinic dashboard displays schedule metrics and a list of appointments with statuses. A patient booking appears at its selected time with a details dialog. | **Implemented** | `StaffDashboard` derives the schedule entry, time, lifecycle status, and metric from the shared appointment state. |
 | Review intake form | A form completed by the patient appears in the employee request queue and shows the actual submitted answers. | **Implemented** | `StaffDashboard` derives the request, counts, and review dialog from `intakeSubmission`. |
-| Approve/reject refill request | Staff can approve or decline a pending refill and the resulting state is visible to the patient. | **Implemented** | `approve-refill` and `decline-refill` are staff-only API actions. |
+| Approve/reject refill request | Staff see one review card per medication awaiting a decision, naming the medication, and can approve or decline each independently. The decision is visible to the patient on that medication's row. | **Implemented** | `approve-refill` and `decline-refill` are staff-only API actions and both require `medicationId`. |
 | Update visit status | The patient confirms attendance and checks themselves in; staff then starts and completes the visit, or records a no-show. Each role sees the resulting status. | **Implemented** | Role-authorized actions enforce `scheduled` → `confirmed` → `checked-in` → `in-progress` → `completed`, with `no-show` reachable by staff from `scheduled` or `confirmed`. |
 | Patient self check-in | The patient confirms attendance and checks in without staff involvement. | **Implemented** | `confirm-appointment` and `check-in-appointment` are patient-only actions; check-in returns `409` unless the appointment is `confirmed`. |
 | Record a missed appointment | Staff can record that a patient did not attend, and the patient can then book again. | **Implemented** | `no-show-appointment` is staff-only and rejects an appointment that already reached `checked-in`. |
@@ -159,12 +160,12 @@ Brevo is consistent with the original integration exception only while it remain
 | Make the demo easy to reset | Shared workflow state resets after a rolling 24-hour interval. | **Implemented with limitation** | Reset is checked lazily when demo state is accessed; it is not a scheduled midnight reset. |
 | Preserve registered users | User records are excluded from the 24-hour environment reset. | **Agreed adaptation** | This was a later explicit requirement. |
 | Allow a personal user to delete their account | Account settings requires the current password and exact `DELETE` confirmation, then clears related authentication rows and the session. | **Implemented extension** | Fixed demo accounts are protected and return HTTP `403`. |
-| Reset workflow changes | Appointment, intake, and refill state return to their defaults. | **Implemented** | `resetEnvironmentIfDue` in `lib/mfa-db.ts` clears `demo_state`. |
+| Reset workflow changes | Appointment, intake, refill, lab-result and billing state return to their defaults. | **Implemented** | `resetEnvironmentIfDue` in `lib/mfa-db.ts` clears `demo_state`. |
 | Provide an explicit reset option or endpoint | Fixed demo accounts can call `DELETE /api/demo-state` to restore the default workflow state immediately. | **Implemented** | The endpoint requires an authenticated fixed demo account and preserves users. |
 
 ### Current reset behavior
 
-The reset is global, not per user. After 24 hours have elapsed, the next demo-state read or write restores the shared appointment, intake, message, and refill state to deterministic defaults. Registered users remain available. Expired MFA challenges and stale pending registrations are cleaned up.
+The reset is global, not per user. After 24 hours have elapsed, the next demo-state read or write restores the shared appointment, intake, message, refill, lab-result and billing state to deterministic defaults. Registered users remain available. Expired MFA challenges and stale pending registrations are cleaned up.
 
 Tests can establish an immediate known starting state through the protected reset endpoint before exercising patient and employee flows.
 

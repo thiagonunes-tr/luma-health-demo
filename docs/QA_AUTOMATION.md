@@ -37,14 +37,11 @@ After reset, the state is:
 
 ```json
 {
-  "appointmentBooked": false,
   "appointmentStatus": "none",
   "appointmentTime": "10:30",
   "appointmentProvider": null,
   "appointmentSpecialty": null,
-  "intakeComplete": false,
   "intakeSubmission": null,
-  "refillStatus": "none",
   "messages": ["Two deterministic starter messages"],
   "lastRead": { "patient": null, "staff": null },
   "insurance": {
@@ -52,7 +49,10 @@ After reset, the state is:
     "planName": "Silver Care",
     "memberId": "HF-2048",
     "updatedAt": "Initial demo record"
-  }
+  },
+  "medications": ["med-losartan, med-metformin, med-atorvastatin — each refillStatus: none"],
+  "results": ["result-cbc, result-lipids — both status: new"],
+  "statement": { "id": "statement-jul", "amount": "$40.00", "status": "unpaid" }
 }
 ```
 
@@ -89,9 +89,11 @@ the versioned [`public/openapi.json`](../public/openapi.json) file.
 | `PATCH /api/demo-state` with `submit-intake` | Patient | Validates and stores all four intake fields. Returns `409` unless an appointment is `scheduled`, `confirmed`, or `checked-in` |
 | `PATCH /api/demo-state` with `send-message` | Patient or employee | Appends a message and derives the sender from the session |
 | `PATCH /api/demo-state` with `update-insurance` | Patient | Validates and persists provider, plan, and member ID |
-| `PATCH /api/demo-state` with `request-refill` | Patient | Changes refill status from `none` or `rejected` to `pending` |
-| `PATCH /api/demo-state` with `approve-refill` | Employee | Changes refill status from `pending` to `approved` |
-| `PATCH /api/demo-state` with `decline-refill` | Employee | Changes refill status from `pending` to `rejected` |
+| `PATCH /api/demo-state` with `request-refill` | Patient | Moves the medication named by `medicationId` from `none` or `rejected` to `pending` |
+| `PATCH /api/demo-state` with `approve-refill` | Employee | Moves the medication named by `medicationId` from `pending` to `approved` |
+| `PATCH /api/demo-state` with `decline-refill` | Employee | Moves the medication named by `medicationId` from `pending` to `rejected` |
+| `PATCH /api/demo-state` with `acknowledge-result` | Patient | Marks the result named by `resultId` as `viewed`; repeating it is a no-op |
+| `PATCH /api/demo-state` with `pay-statement` | Patient | Marks the statement `paid`; a second attempt returns `409` |
 | `PATCH /api/demo-state` with `start-appointment` | Employee | Changes `checked-in` to `in-progress` |
 | `PATCH /api/demo-state` with `complete-appointment` | Employee | Changes `in-progress` to `completed` |
 | `PATCH /api/demo-state` with `no-show-appointment` | Employee | Changes `scheduled` or `confirmed` to `no-show` |
@@ -105,7 +107,7 @@ curl --fail-with-body \
   --cookie "$COOKIE_JAR" \
   --request PATCH \
   --header "Content-Type: application/json" \
-  --data '{"action":"request-refill"}' \
+  --data '{"action":"request-refill","medicationId":"med-losartan"}' \
   "$BASE_URL/api/demo-state"
 ```
 
@@ -124,23 +126,23 @@ Tests should assert these responses when covering negative paths. The client wai
 
 1. Sign in as the patient using the demo MFA bypass.
 2. Reset the demo state.
-3. Assert the negative paths that depend on an empty state: `approve-refill` as the patient returns `403`, `complete-intake` with no appointment returns `409`, and `check-in-appointment` before confirming returns `409`.
+3. Assert the negative paths that depend on an empty state: `approve-refill` as the patient returns `403`, `complete-intake` with no appointment returns `409`, and `check-in-appointment` before confirming returns `409`. Assert the malformed paths too, which are `400` and not `409`: `request-refill` with no `medicationId`, `request-refill` with an id that is not on file, and `acknowledge-result` with an unknown `resultId`.
 4. Book an appointment, reschedule it, then **confirm attendance**. Rescheduling clears any earlier confirmation, so confirm after the final time is set.
-5. Complete all intake fields, update insurance, send a care-team message, and request a refill.
+5. Complete all intake fields, update insurance, and send a care-team message. Then open **Medications** and request a refill for one medication by its accessible name (`Request a refill for Losartan 50 mg`), and assert the other two are untouched — one medication's refill must not move the others.
 6. Open Results, verify the CBC values, and download the visit summary as `maria-lopez-visit-summary.csv`.
 7. **Check in** as the patient. This is the patient's own step; the employee portal cannot perform it.
 8. Sign out.
 9. Sign in as the employee using the demo MFA bypass.
-10. Search for Maria Lopez and verify that her profile reflects the shared appointment, intake, insurance, and refill state, and that the appointment reads as checked in at the selected time.
+10. Search for Maria Lopez and verify that her profile reflects the shared appointment, intake, insurance, refill, result and billing state, and that the appointment reads as checked in at the selected time.
 11. Verify that Maria Lopez's submitted intake appears in Requests and assert the entered answers.
 12. Open Messages, assert the patient's text, and send a staff reply.
-13. Verify the pending refill and approve or decline it.
+13. Verify the pending refill names the medication it is for, then approve or decline it by its accessible name (`Approve the refill for Losartan 50 mg`).
 14. Start the visit and complete it. Alternatively, from a `scheduled` or `confirmed` appointment, record a no-show instead.
 15. Assert that `start-appointment` on a completed visit returns `409`.
 16. Sign out and sign in again as the patient.
-17. Verify the staff reply, the completed visit, and the final refill status.
-18. If the refill was declined, submit a new request and confirm it returns to `pending`.
-19. Reset the demo state and assert that the appointment, provider, specialty, intake, refill, insurance, and read markers all return to their defaults.
+17. Verify the staff reply, the completed visit, and that the decision landed on the medication it was made for — not on the other two.
+18. If the refill was declined, submit a new request for the same medication and confirm it returns to `pending`.
+19. Reset the demo state and assert that the appointment, provider, specialty, intake, insurance and read markers return to their defaults, that every medication is back to `refillStatus: "none"`, that both results are back to `status: "new"`, and that the statement is `unpaid`.
 
 Use accessible names and visible labels when locating UI controls. Wait for the confirmation toast or resulting UI state instead of using fixed timeouts. Do not continue to the next role until the action request has completed.
 
@@ -150,7 +152,8 @@ The employee dashboard derives all three cross-role views from the same persiste
 - `intakeComplete: true` and `intakeSubmission` add Maria Lopez's submitted form, update the counts, and expose the exact submitted answers in the review dialog.
 - `messages` is a single shared thread. New entries retain deterministic IDs and server-generated sender roles; reload the other portal before asserting a reply.
 - `insurance` is visible in the patient Forms screen and Maria Lopez's staff profile after reload.
-- `refillStatus: "pending"` adds the refill review card; employee approval or rejection is visible to the patient on the next state load.
+- A medication whose `refillStatus` is `"pending"` adds one refill review card **per medication**, each carrying its own approve and decline controls. The decision is visible to the patient on the next state load, on that medication's row only.
+- `results` and `statement` are patient-owned: staff cannot open a result or pay a statement (both return `403`), but Maria Lopez's staff profile reports how many results are unread and whether the statement is settled.
 
 For the deterministic CSV, assert the suggested filename and contents rather than a filesystem-specific path. The file must contain Maria Lopez, July 12, 2026, Dr. Ana Costa, the stable assessment, and the care plan.
 
@@ -205,8 +208,8 @@ The scenario covers:
 
 - Anonymous and role-forbidden API responses.
 - Protected demo-account deletion through both API and Account settings.
-- Patient appointment, intake, insurance, refill, messaging, lab, summary, and CSV flows.
-- Staff patient search, intake review, reply, refill approval, appointment lifecycle, and summary export.
+- Patient appointment, intake, insurance, per-medication refill, lab-result acknowledgement, statement payment, messaging, summary, and CSV flows.
+- Staff patient search, intake review, reply, per-medication refill approval, appointment lifecycle, and summary export.
 - Final patient-visible state, invalid-transition handling, and deterministic reset.
 
 The deployment suite deliberately does not create or delete a personal account because doing so requires real Brevo delivery. Personal-account deletion should be exercised in an isolated manual or provider-injected environment; never send test email from the deployment gate.
@@ -215,7 +218,7 @@ Screenshots, downloads, the development-server log, and failure traces are writt
 
 ## Isolation and parallelism
 
-The demo workflow state is global and shared by all sessions. Stateful end-to-end scenarios must therefore run serially or against separate deployments. Parallel tests may overwrite each other's appointment, intake, message, or refill state.
+The demo workflow state is global and shared by all sessions. Stateful end-to-end scenarios must therefore run serially or against separate deployments. Parallel tests may overwrite each other's appointment, intake, message, refill, result or billing state.
 
 For reliable suites:
 
