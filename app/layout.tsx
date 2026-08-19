@@ -8,22 +8,29 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const imageUrl = `${protocol}://${host}/og.png`;
 
+  // This entry point serves the same app as vercel-frontend/index.html, so it
+  // must carry the same disclosure. A shared link is often the first thing
+  // anyone sees, and "Simple, connected, human care." reads as a real product.
+  const title = "Luma Health | Patient Portal (demo)";
+  const description =
+    "A fictional healthcare portal used for QA automation training. No real patient data.";
+
   return {
-    title: "Luma Health | Patient Portal",
-    description: "Simple, connected, human care.",
+    title,
+    description,
     icons: {
       icon: "/favicon.svg",
     },
     openGraph: {
-      title: "Luma Health",
-      description: "Simple, connected, human care.",
+      title,
+      description,
       type: "website",
-      images: [{ url: imageUrl, width: 1734, height: 909, alt: "Luma Health patient portal" }],
+      images: [{ url: imageUrl, width: 1200, height: 630, alt: "Luma Health demo portal: a fictional patient portal for QA automation training" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "Luma Health",
-      description: "Simple, connected, human care.",
+      title,
+      description,
       images: [imageUrl],
     },
   };

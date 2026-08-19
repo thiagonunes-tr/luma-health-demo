@@ -200,7 +200,7 @@ export async function sendMfaEmail(
   const apiKey = requiredSecret("BREVO_API_KEY");
   const senderEmail = runtime.BREVO_SENDER_EMAIL;
   if (!senderEmail) throw new Error("BREVO_SENDER_EMAIL is not configured.");
-  const senderName = runtime.BREVO_SENDER_NAME ?? "Luma Health";
+  const senderName = runtime.BREVO_SENDER_NAME ?? "Luma Health (demo)";
 
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
@@ -212,8 +212,8 @@ export async function sendMfaEmail(
     body: JSON.stringify({
       sender: { name: senderName, email: senderEmail },
       to: [{ email: recipient }],
-      subject: `${code} is your Luma Health verification code`,
-      textContent: `Your Luma Health verification code is ${code}. It expires in 10 minutes. If you did not try to sign in, you can ignore this email.`,
+      subject: `${code} is your Luma Health verification code (demo)`,
+      textContent: `Your Luma Health verification code is ${code}. It expires in 10 minutes. If you did not try to sign in, you can ignore this email.\n\nLuma Health is a fictional healthcare portal used for QA automation training. It is not a real clinic, holds no medical records, and will never ask you for health information.`,
       htmlContent: emailHtml(code),
       headers: { "Idempotency-Key": challengeId },
       tags: ["luma-health-mfa"],
@@ -300,13 +300,14 @@ function emailHtml(code: string): string {
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 16px;background:#f4f8f7">
       <tr><td align="center">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:520px;background:#ffffff;border:1px solid #e1eae7;border-radius:18px;overflow:hidden">
-          <tr><td style="padding:28px 32px;background:#116f68;color:#ffffff;font-size:20px;font-weight:700">Luma Health</td></tr>
+          <tr><td style="padding:28px 32px;background:#116f68;color:#ffffff;font-size:20px;font-weight:700">Luma Health <span style="font-size:13px;font-weight:400;opacity:.85">· demo</span></td></tr>
           <tr><td style="padding:34px 32px">
             <p style="margin:0 0 10px;font-size:12px;font-weight:700;letter-spacing:1.2px;color:#117b72">SECURE SIGN-IN</p>
             <h1 style="margin:0 0 12px;font-size:25px">Verify your identity</h1>
             <p style="margin:0 0 26px;color:#63757b;font-size:15px;line-height:1.55">Enter this code to finish signing in to your Luma Health account.</p>
             <div style="padding:19px;text-align:center;background:#edf7f4;border-radius:12px;color:#0b5f59;font-size:34px;font-weight:800;letter-spacing:9px">${code}</div>
             <p style="margin:22px 0 0;color:#63757b;font-size:13px;line-height:1.5">This code expires in 10 minutes and can only be used once. If you did not try to sign in, you can safely ignore this email.</p>
+            <p style="margin:18px 0 0;padding:12px 14px;background:#fbeddf;border-radius:10px;color:#7d4626;font-size:12px;line-height:1.5"><strong>This is a demonstration.</strong> Luma Health is a fictional healthcare portal used for QA automation training. It is not a real clinic, holds no medical records, and will never ask you for health information.</p>
           </td></tr>
         </table>
       </td></tr>
