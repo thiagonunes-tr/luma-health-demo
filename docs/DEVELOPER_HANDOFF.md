@@ -607,6 +607,10 @@ Run **Actions → Deploy staging Worker → Run workflow**, pick the branch, and
 confirm. It runs the same gate as production — lint, unit tests, the browser suite — then publishes
 to `luma-health-demo-staging`. It refuses to run on `main`, and refuses to deploy at all if the
 staging database id is unset, because falling back to the default id would write to production.
+After publishing, it fails the run if either Worker secret below is missing, and prints the command
+to set it: a staging Worker once went out with `MFA_SESSION_SECRET` and no `BREVO_API_KEY`, and
+because both sign-in and account creation send a verification email, a reviewer found the whole
+authentication flow broken and filed it against the branch.
 
 One-time setup:
 
@@ -617,10 +621,15 @@ wrangler d1 create luma-health-demo-staging-db
 # 2. Save the returned database_id as the repository variable
 #    STAGING_D1_DATABASE_ID (Settings → Secrets and variables → Actions → Variables).
 
-# 3. Secrets for the staging Worker.
+# 3. Both secrets for the staging Worker. Not one of them: the workflow now
+#    checks, but the check runs after the deploy, so a half-configured Worker
+#    still gets published once before the run goes red.
 wrangler secret put MFA_SESSION_SECRET --name luma-health-demo-staging
 wrangler secret put BREVO_API_KEY --name luma-health-demo-staging
 ```
+
+`BREVO_SENDER_EMAIL` and `BREVO_SENDER_NAME` need no setup: they are plain vars in `wrangler.jsonc`
+and travel with the build.
 
 The build reads `D1_DATABASE_NAME` and `D1_DATABASE_ID` (`vite.config.ts`) and falls back to the
 production pair when they are unset, so a normal `npm run build` is unchanged. The workflow asserts

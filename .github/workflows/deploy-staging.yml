@@ -7,7 +7,8 @@ name: Deploy staging Worker
 # One-time setup, documented in docs/DEVELOPER_HANDOFF.md §10:
 #   1. wrangler d1 create luma-health-demo-staging-db
 #   2. Save the returned id as the STAGING_D1_DATABASE_ID repository variable.
-#   3. Set MFA_SESSION_SECRET and BREVO_API_KEY on the staging Worker.
+#   3. Set BOTH MFA_SESSION_SECRET and BREVO_API_KEY on the staging Worker;
+#      the last step of this workflow fails the run if either is missing.
 #   4. Point the Vercel Preview environment's API_ORIGIN at the staging Worker.
 
 on:
@@ -115,3 +116,32 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy --name luma-health-demo-staging
+
+      # The header above asks a human to set these once. It used to only ask. A
+      # staging Worker went out with MFA_SESSION_SECRET and no BREVO_API_KEY, so
+      # every verification email failed with a generic 502, and a reviewer filed
+      # two bug reports against a branch that was not at fault. Sign-in and
+      # account creation both send that email, so both look broken at once.
+      #
+      # Checked after the deploy, not before: on a first run the Worker does not
+      # exist yet and has nothing to list.
+      - name: Confirm the staging Worker has the secrets it needs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          CONFIGURED=$(npx wrangler secret list --name luma-health-demo-staging 2>&1 || true)
+          MISSING=0
+          for SECRET in MFA_SESSION_SECRET BREVO_API_KEY; do
+            if ! printf '%s' "$CONFIGURED" | grep -q "\"$SECRET\""; then
+              MISSING=1
+              echo "::error::The staging Worker has no $SECRET. Set it once with:"
+              echo "::error::  npx wrangler secret put $SECRET --name luma-health-demo-staging"
+            fi
+          done
+          if [ "$MISSING" -eq 1 ]; then
+            echo "::error::Two-factor sign-in and account creation both send a"
+            echo "::error::verification email, so both are broken until this is fixed."
+            exit 1
+          fi
+          echo "Staging secrets present: MFA_SESSION_SECRET, BREVO_API_KEY"
