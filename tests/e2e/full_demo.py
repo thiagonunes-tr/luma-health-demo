@@ -49,8 +49,13 @@ AXE_RULES = [
 ]
 
 
-def audit_accessibility(page: Page, surface: str) -> None:
-  """Fail the deploy on any violation of the rules this redesign owns."""
+def audit_surface(page: Page, surface: str) -> None:
+  """Fail the deploy on any violation of the rules this redesign owns.
+
+  Semantics and geometry both, because a surface can be perfectly accessible
+  and still render wrong: axe reads the DOM and the colours, never where an
+  element actually landed.
+  """
   results = AXE.run(
     page,
     # The Swagger console is vendor DOM (swagger-ui-react); its violations are
@@ -83,8 +88,35 @@ def audit_accessibility(page: Page, surface: str) -> None:
     raise AssertionError(f"axe violations on {surface}:\n{detail}")
   for target in undetermined:
     measure_contrast(page, target[0] if isinstance(target, list) else target, surface)
+  assert_avatars_fit(page, surface)
   suffix = f" ({len(undetermined)} gradient nodes measured directly)" if undetermined else ""
-  print(f"  axe clean: {surface}{suffix}")
+  print(f"  audited: {surface}{suffix}")
+
+
+def assert_avatars_fit(page: Page, surface: str) -> None:
+  """No avatar may overlap what sits beside it.
+
+  Four grids reserve a fixed column for an avatar. The `min-width: 1000px` block
+  grows the avatar from --space-6 to --space-7; the schedule row and the request
+  card grow their columns with it and the conversation header is already wide
+  enough, but the patient directory was missed, so on desktop its avatars
+  overhung the names beside them by 4px. Nothing else in the gate can see that:
+  the DOM is valid, the accessible names are right, the contrast passes.
+  """
+  overlaps = page.evaluate(
+    """() => Array.from(document.querySelectorAll('.patient-avatar')).flatMap(avatar => {
+      const next = avatar.nextElementSibling;
+      if (!next) return [];
+      const own = avatar.getBoundingClientRect();
+      const beside = next.getBoundingClientRect();
+      if (own.right <= beside.left + 0.5) return [];
+      return [{
+        container: avatar.parentElement.closest('[class]').className,
+        overlapPx: Math.round(own.right - beside.left),
+      }];
+    })"""
+  )
+  assert overlaps == [], f"avatar overlaps its neighbour on {surface}: {overlaps}"
 
 
 MIN_CONTRAST = 4.5
@@ -189,6 +221,55 @@ def sign_in(page: Page, role: str, email: str, password: str) -> None:
   page.get_by_role("heading", name=heading).wait_for()
 
 
+def verify_patient_search(page: Page) -> None:
+  """The patient directory: a surface the gate never opened until it broke.
+
+  Both defects a reviewer found here were invisible to every other check. The
+  search field is composed - the wrapper draws the box, the icon sits inside it
+  - so the control itself must stay bare; a broad `.modal input` rule outranked
+  the field's own rule and painted a second bordered, padded box inside the
+  first. Assert the computed style, not a screenshot: the point is that what the
+  component authored is what the browser applied.
+  """
+  page.get_by_role("button", name="Search patients").click()
+  # The dialog is labelled by its heading, so its accessible name changes from
+  # "Search patients" to the patient's once a result is opened. Hold the
+  # container by class and let the role query stay honest about the name.
+  page.get_by_role("dialog", name="Search patients").wait_for()
+  dialog = page.locator(".patient-search-modal")
+  result = dialog.get_by_role("button", name="Maria Lopez")
+  result.wait_for()
+
+  painted = page.evaluate(
+    r"""() => {
+      const input = document.querySelector('.patient-search-input input');
+      const style = getComputedStyle(input);
+      return Object.entries({
+        borderTopWidth: style.borderTopWidth,
+        borderTopStyle: style.borderTopStyle,
+        paddingTop: style.paddingTop,
+        marginTop: style.marginTop,
+        backgroundColor: style.backgroundColor,
+      }).filter(([key, value]) => !(
+        key === 'backgroundColor' ? /rgba\(0, 0, 0, 0\)|transparent/.test(value)
+        : key === 'borderTopStyle' ? value === 'none'
+        : parseFloat(value) === 0
+      ));
+    }"""
+  )
+  assert painted == [], (
+    f"the search control is painting its own box, not staying inside the "
+    f"wrapper's: {painted}"
+  )
+
+  audit_surface(page, "staff · patient directory")
+
+  result.click()
+  page.get_by_role("dialog", name="Maria Lopez").wait_for()
+  audit_surface(page, "staff · patient profile")
+  dialog.get_by_role("button", name="Close").last.click()
+
+
 def sign_out(page: Page) -> None:
   # One account control, in the topbar: it is the only one present on phones,
   # where the sidebar is hidden. Sign-out is a labelled button inside the dialog.
@@ -264,7 +345,7 @@ def run_scenario(page: Page) -> None:
 
   page.goto(BASE_URL)
   page.wait_for_load_state("networkidle")
-  audit_accessibility(page, "sign-in screen")
+  audit_surface(page, "sign-in screen")
 
   sign_in(
     page,
@@ -387,7 +468,7 @@ def run_scenario(page: Page) -> None:
   # Refills live on their own destination now, because the request has to name
   # the medication it is for.
   sidebar(page, "Medications")
-  audit_accessibility(page, "patient · medications")
+  audit_surface(page, "patient · medications")
   page.get_by_label("Request a refill for Losartan 50 mg").click()
   page.get_by_text("Request submitted", exact=True).wait_for()
   losartan = page.locator(".medication-row").filter(has_text="Losartan 50 mg")
@@ -409,7 +490,7 @@ def run_scenario(page: Page) -> None:
   ).wait_for()
 
   sidebar(page, "Health record")
-  audit_accessibility(page, "patient · health record")
+  audit_surface(page, "patient · health record")
   # Both results start unread, and each card carries its own New marker.
   cbc = page.locator(".document-card").filter(has_text="Complete blood count")
   lipids = page.locator(".document-card").filter(has_text="Lipid panel")
@@ -420,7 +501,7 @@ def run_scenario(page: Page) -> None:
   page.get_by_text("13.6 g/dL", exact=True).wait_for()
   page.get_by_text("6.4 K/uL", exact=True).wait_for()
   page.get_by_text("248 K/uL", exact=True).wait_for()
-  audit_accessibility(page, "patient · lab result dialog")
+  audit_surface(page, "patient · lab result dialog")
   page.get_by_role("button", name="Done").click()
 
   # Opening it was the acknowledgement: that card loses New, the other keeps it.
@@ -449,7 +530,7 @@ def run_scenario(page: Page) -> None:
 
   # Check-in is the patient's own step now, not a staff action.
   sidebar(page, "Home")
-  audit_accessibility(page, "patient · home")
+  audit_surface(page, "patient · home")
   page.get_by_role("button", name="Check in now").click()
   page.get_by_text("You are checked in", exact=True).wait_for()
 
@@ -476,7 +557,7 @@ def run_scenario(page: Page) -> None:
   assert page.locator('[role="dialog"]').count() == 0
 
   sidebar(page, "Requests")
-  audit_accessibility(page, "staff · requests")
+  audit_surface(page, "staff · requests")
   page.locator(
     '[aria-label="Maria Lopez submitted intake form"]'
   ).get_by_role("button", name="Review form").click()
@@ -502,7 +583,8 @@ def run_scenario(page: Page) -> None:
   page.get_by_text("Refill approved", exact=True).wait_for()
 
   sidebar(page, "Today")
-  audit_accessibility(page, "staff · today")
+  audit_surface(page, "staff · today")
+  verify_patient_search(page)
 
   # The portal appointment used to be spliced into the schedule at a fixed
   # index, so a 9:00 AM visit rendered after the 10:00 AM one.

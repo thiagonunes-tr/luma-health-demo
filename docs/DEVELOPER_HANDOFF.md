@@ -753,9 +753,16 @@ If the demo needs isolated sessions, add an environment or tenant identifier and
 The UI was rebuilt in 2026 against a Dieter Rams audit (`DESIGN-IS-2026-08-19/`, which scored the
 previous version 8/30). What that pass established, and what must not regress:
 
-- **`app/globals.css` has a token layer.** Every colour, font size, and spacing value lives in the
-  `:root` block. A hex literal outside that block is a defect: `sed '1,<root-end>d' app/globals.css
-  | grep -oE '#[0-9a-fA-F]{3,8}'` must return nothing. The previous version had 101.
+- **`app/globals.css` has a token layer.** Every colour, font size, and spacing value lives in a
+  `:root` block — the light one and the `[data-theme="dark"]` one. A hex literal outside them is a
+  defect:
+
+  ```bash
+  awk '/^:root/{skip=1} skip&&/^}/{skip=0;next} !skip' app/globals.css | grep -oE '#[0-9a-fA-F]{3,8}'
+  ```
+
+  must return nothing. The previous version had 101. (The earlier form of this check dropped only
+  the first block, so it reported all 34 dark-theme tokens as violations and told you nothing.)
 - **The type scale has 8 steps with a 12px floor.** Nothing renders smaller. The previous version
   had 24 distinct sizes, 65% of them at or below 12px, including an 8px mobile navigation label.
 - **`--muted` must clear 4.5:1 on `--surface`, `--canvas`, and `--surface-sunken`.** It is the
@@ -775,16 +782,27 @@ previous version 8/30). What that pass established, and what must not regress:
 - **Touch targets are 44×44 minimum**, with a `@media (pointer: coarse)` block for the text buttons.
 
 Automated enforcement: `npm run lint` runs the full `eslint-plugin-jsx-a11y` recommended set
-(34 rules, up from the 6 that `eslint-config-next` enables), and `npm run test:e2e` runs axe-core
-against six surfaces — sign-in, patient home, health record, a lab dialog, staff today, and staff
-requests — gated on the rule list in `tests/e2e/full_demo.py`. The Swagger console is excluded from
-that audit because it is vendor DOM; `swagger-ui-react` has its own violations (`button-name`,
-`select-name`, `color-contrast`) that are not ours to fix.
+(34 rules, up from the 6 that `eslint-config-next` enables), and `npm run test:e2e` audits nine
+surfaces — sign-in, patient home, medications, health record, a lab dialog, staff today, staff
+requests, the patient directory, and a patient profile — gated on the rule list in
+`tests/e2e/full_demo.py`. The Swagger console is excluded from that audit because it is vendor DOM;
+`swagger-ui-react` has its own violations (`button-name`, `select-name`, `color-contrast`) that are
+not ours to fix.
 
-**Not done, deliberately:** there is no dark mode. `prefers-color-scheme` appears nowhere. The
-token layer makes it reachable — it was not reachable before, with 101 hex values hardcoded per
-rule — but implementing it was left out of the redesign. Likewise `prefers-contrast` and
-`forced-colors` are unsupported.
+Each surface is audited twice: axe-core for semantics, and `assert_avatars_fit` for geometry. The
+second half exists because a surface can pass every accessibility rule and still render wrong. A
+reviewer found two such defects in the patient directory — a `@media (min-width: 1000px)` block grew
+the avatar token without growing the grid column reserving space for it, so avatars overhung the
+names beside them by 4px; and the broad `.modal input:not([type="radio"])` rule outranked
+`.patient-search-input input`, painting a second bordered, padded box inside the search field's own
+wrapper. axe saw neither: the DOM was valid, the names were right, the contrast passed. When you add
+a rule that selects elements by tag inside a container class, assume it will outrank the
+component-specific rule someone wrote for one of those elements, and check the computed style.
+
+**Dark mode** is implemented on the token layer that made it reachable: `:root[data-theme="dark"]`
+restates the palette, `useTheme` in `shared/LumaApp.tsx` follows `prefers-color-scheme` until the
+reader picks a side with the topbar switch, and the choice persists in `localStorage` under
+`luma-theme`. **Not done, deliberately:** `prefers-contrast` and `forced-colors` are unsupported.
 
 ### UI scope
 
@@ -795,7 +813,7 @@ rule — but implementing it was left out of the redesign. Likewise `prefers-con
 
 ### Test suite
 
-`npm test` runs deterministic unit coverage for demo actions, role restrictions, workflow transitions, MFA policies, and OpenAPI route coverage — including three tests that compare `public/openapi.json` against `lib/demo-state.ts`, so the contract can no longer drift from the TypeScript source in silence. `npm run test:e2e` validates the interactive `/api-docs` console, runs axe-core against six application surfaces, and then runs the serial cross-role browser journey. The GitHub Actions production workflow runs both suites as release gates before either build and the Worker deploy.
+`npm test` runs deterministic unit coverage for demo actions, role restrictions, workflow transitions, MFA policies, and OpenAPI route coverage — including three tests that compare `public/openapi.json` against `lib/demo-state.ts`, so the contract can no longer drift from the TypeScript source in silence. `npm run test:e2e` validates the interactive `/api-docs` console, audits nine application surfaces for both accessibility and layout geometry, and then runs the serial cross-role browser journey. The GitHub Actions production workflow runs both suites as release gates before either build and the Worker deploy.
 
 Remaining recommended coverage:
 
