@@ -24,6 +24,7 @@ import type {
 } from "../lib/demo-state";
 import { Icon, type IconName } from "./Icon";
 import { Modal } from "./Modal";
+import { useTooltip } from "./Tooltip";
 
 type Role = "patient" | "staff";
 type AppointmentAdvanceAction =
@@ -114,9 +115,69 @@ const STAFF_NAV: NavEntry[] = [
   { id: "messages", label: "Messages", icon: "message" },
 ];
 
+/** Every request card is Maria Lopez's, and every one of them says so. */
+function MariaAvatarButton({ onOpen }: { onOpen: (patient: PatientProfile) => void }) {
+  const maria = patientProfileFor("Maria Lopez");
+  if (!maria) return <span className="patient-avatar">ML</span>;
+  return <PatientAvatarButton patient={maria} onOpen={onOpen} />;
+}
+
+/** The directory entry behind a name on screen, or null if there is no card. */
+function patientProfileFor(name: string): PatientProfile | null {
+  return patientProfiles.find(patient => patient.name === name) ?? null;
+}
+
+/**
+ * The initials a reviewer kept clicking. They open the same profile card the
+ * patient directory shows, so there is one description of a patient in the app
+ * rather than two. Not used inside `.patient-results`, where the whole row is
+ * already the button: a button inside a button is invalid HTML and unreachable
+ * by keyboard.
+ */
+function PatientAvatarButton({ patient, onOpen }: {
+  patient: PatientProfile;
+  onOpen: (patient: PatientProfile) => void;
+}) {
+  const tooltip = useTooltip(`Quick profile · ${patient.name}`);
+  return <button
+    type="button"
+    className="patient-avatar has-tooltip"
+    onClick={() => onOpen(patient)}
+    aria-label={`Quick profile for ${patient.name}`}
+    {...tooltip.triggerProps}
+  >{patient.initials}{tooltip.tip}</button>;
+}
+
 /** Where each role lands after signing in. */
 function homeNavFor(role: Role): NavId {
   return role === "patient" ? "home" : "today";
+}
+
+/** The name of that destination, so the logo can say where it goes. */
+function homeLabelFor(role: Role): string {
+  const nav = role === "patient" ? PATIENT_NAV : STAFF_NAV;
+  return nav.find(entry => entry.id === homeNavFor(role))?.label ?? "the start";
+}
+
+/**
+ * The Luma Health mark. It is a button in both places it appears, because a
+ * logo that does nothing is the one thing every reviewer tries to click.
+ */
+function BrandButton({ className, role, onGoHome, children }: {
+  className: string;
+  role: Role;
+  onGoHome: () => void;
+  children: ReactNode;
+}) {
+  const label = homeLabelFor(role);
+  const tooltip = useTooltip(`Back to ${label}`);
+  return <button
+    type="button"
+    className={`${className} has-tooltip`}
+    onClick={onGoHome}
+    aria-label={`Luma Health — back to ${label}`}
+    {...tooltip.triggerProps}
+  >{children}{tooltip.tip}</button>;
 }
 
 function formatAppointmentTime(time: AppointmentTime): string {
@@ -210,17 +271,20 @@ function ThemeSwitch({ isDark, onChange }: {
   isDark: boolean;
   onChange: (next: "light" | "dark") => void;
 }) {
+  const tooltip = useTooltip(isDark ? "Switch to the light theme" : "Switch to the dark theme");
   return <button
     type="button"
-    className="theme-switch"
+    className="theme-switch has-tooltip"
     role="switch"
     aria-checked={isDark}
     aria-label="Dark mode"
     onClick={() => onChange(isDark ? "light" : "dark")}
+    {...tooltip.triggerProps}
   >
     <span className="theme-switch-icon" aria-hidden="true"><Icon name="sun" size={15} /></span>
     <span className="theme-switch-track" aria-hidden="true"><i /></span>
     <span className="theme-switch-icon" aria-hidden="true"><Icon name="moon" size={15} /></span>
+    {tooltip.tip}
   </button>;
 }
 
@@ -737,6 +801,7 @@ export default function Home() {
         busyTarget={demoBusyTarget}
         onApproveRefill={approveRefill}
         onDeclineRefill={declineRefill}
+        onOpenSummary={() => setActiveModal({ kind: "visit-summary" })}
       />
     ),
     messages: messageCenter,
@@ -771,10 +836,13 @@ export default function Home() {
       </nav>
 
       <aside className="sidebar">
-        <div className="brand">
+        {/* The topbar logo already went home on phones; the sidebar one was the
+            only Luma Health mark that did not, which is the one a reviewer
+            clicked. Same destination, same label. */}
+        <BrandButton className="brand" role={role} onGoHome={() => setActiveNav(homeNavFor(role))}>
           <span className="brand-mark" aria-hidden="true"><i></i><b></b></span>
           <span>Luma <strong>Health</strong></span>
-        </div>
+        </BrandButton>
 
         <div className="role-label">
           <span><Icon name="shield-check" size={13} /></span>{role === "patient" ? "Patient portal" : "Clinic staff portal"}
@@ -803,9 +871,9 @@ export default function Home() {
 
       <div className="workspace">
         <header className="topbar">
-          <button className="mobile-brand" onClick={() => setActiveNav(homeNavFor(role))} aria-label="Back to start">
+          <BrandButton className="mobile-brand" role={role} onGoHome={() => setActiveNav(homeNavFor(role))}>
             <span className="brand-mark small" aria-hidden="true"><i></i><b></b></span>Luma Health
-          </button>
+          </BrandButton>
           <div className="top-actions">
             <ThemeSwitch isDark={isDarkTheme} onChange={chooseTheme} />
             <button className="top-user" onClick={() => setActiveModal({ kind: "account" })} aria-label="Account settings"><span className="avatar">{initials}</span><span><strong>{displayName}</strong><small>{role === "patient" ? "Patient · Account settings" : "Clinic staff · Account settings"}</small></span></button>
@@ -1255,10 +1323,17 @@ function StaffToday({ staffName, demo, busyAction, onAdvanceAppointment, onOpenS
   onGoTo: (id: NavId) => void;
 }) {
   const [activeModal, setActiveModal] = useState<StaffModal>(null);
-  const closeModal = () => setActiveModal(null);
+  // The directory dialog opens either empty, from "Search patients", or already
+  // on one patient, from that patient's initials.
+  const [quickProfile, setQuickProfile] = useState<PatientProfile | null>(null);
+  const closeModal = () => { setActiveModal(null); setQuickProfile(null); };
+  const openQuickProfile = (patient: PatientProfile) => {
+    setQuickProfile(patient);
+    setActiveModal("patient-search");
+  };
   // Close this dialog before the parent opens the summary: two aria-modal
   // dialogs mounted at once means two focus traps and two Escape listeners.
-  const openSummary = () => { setActiveModal(null); onOpenSummary(); };
+  const openSummary = () => { setActiveModal(null); setQuickProfile(null); onOpenSummary(); };
   const { appointmentStatus, appointmentTime, intakeSubmission } = demo;
 
   const portalAppointment: StaffAppointment = {
@@ -1292,7 +1367,12 @@ function StaffToday({ staffName, demo, busyAction, onAdvanceAppointment, onOpenS
     <div className="staff-layout">
       <div className="panel schedule-panel">
         <div className="panel-heading"><div><h2>Today&apos;s schedule</h2><p>Friday, July 24</p></div></div>
-        {staffAppointments.map(item => <div className={`schedule-row${item.fromPatientPortal ? " newly-booked" : ""}`} key={`${item.time}-${item.patient}`}><strong>{item.time}</strong><span className="patient-avatar">{item.patient.split(" ").map(n => n[0]).join("")}</span><div><b>{item.patient}</b><small>{item.type}</small></div><span className={`queue-status ${item.status === "In waiting room" ? "waiting" : ""}`}>{item.status}</span>{item.fromPatientPortal ? <button aria-label="Review Maria Lopez's new appointment" onClick={() => setActiveModal("appointment")}><Icon name="arrow-right" size={15} /></button> : <span />}</div>)}
+        {staffAppointments.map(item => <div className={`schedule-row${item.fromPatientPortal ? " newly-booked" : ""}`} key={`${item.time}-${item.patient}`}><strong>{item.time}</strong>{(() => {
+          const profile = patientProfileFor(item.patient);
+          return profile
+            ? <PatientAvatarButton patient={profile} onOpen={openQuickProfile} />
+            : <span className="patient-avatar">{item.patient.split(" ").map(n => n[0]).join("")}</span>;
+        })()}<div><b>{item.patient}</b><small>{item.type}</small></div><span className={`queue-status ${item.status === "In waiting room" ? "waiting" : ""}`}>{item.status}</span>{item.fromPatientPortal ? <button aria-label="Review Maria Lopez's new appointment" onClick={() => setActiveModal("appointment")}><Icon name="arrow-right" size={15} /></button> : <span />}</div>)}
       </div>
       <div className="panel request-panel">
         <div className="panel-heading"><div><h2>Requests</h2><p>Need your attention</p></div>{openRequests > 0 && <span className="count-badge">{openRequests}</span>}</div>
@@ -1302,19 +1382,27 @@ function StaffToday({ staffName, demo, busyAction, onAdvanceAppointment, onOpenS
       </div>
     </div>
     {activeModal === "appointment" && <AppointmentReviewModal appointmentStatus={appointmentStatus} appointmentTime={appointmentTime} appointmentProvider={demo.appointmentProvider} appointmentSpecialty={demo.appointmentSpecialty} busyAction={busyAction} onAdvance={onAdvanceAppointment} onOpenSummary={openSummary} onClose={() => closeModal()} />}
-    {activeModal === "patient-search" && <PatientSearchModal demo={demo} onOpenSummary={openSummary} onClose={() => closeModal()} />}
+    {activeModal === "patient-search" && <PatientSearchModal demo={demo} initialPatient={quickProfile} onOpenSummary={openSummary} onClose={() => closeModal()} />}
   </div>;
 }
 
-function StaffRequests({ demo, busyAction, busyTarget, onApproveRefill, onDeclineRefill }: {
+function StaffRequests({ demo, busyAction, busyTarget, onApproveRefill, onDeclineRefill, onOpenSummary }: {
   demo: DemoState;
   busyAction: DemoStateAction | null;
   busyTarget: string | null;
   onApproveRefill: (medicationId: string) => void | Promise<unknown>;
   onDeclineRefill: (medicationId: string) => void | Promise<unknown>;
+  onOpenSummary: () => void;
 }) {
   const [activeModal, setActiveModal] = useState<StaffModal>(null);
-  const closeModal = () => setActiveModal(null);
+  const [quickProfile, setQuickProfile] = useState<PatientProfile | null>(null);
+  const closeModal = () => { setActiveModal(null); setQuickProfile(null); };
+  const openQuickProfile = (patient: PatientProfile) => {
+    setQuickProfile(patient);
+    setActiveModal("patient-search");
+  };
+  // One dialog at a time: see the note in StaffToday.
+  const openSummary = () => { setActiveModal(null); setQuickProfile(null); onOpenSummary(); };
   const { intakeSubmission, medications } = demo;
   // Split rather than filtered inline: a decided request stays visible so the
   // person who decided it can see what they did, but it is not still "open".
@@ -1335,7 +1423,7 @@ function StaffRequests({ demo, busyAction, busyTarget, onApproveRefill, onDeclin
       {awaitingDecision.map(medication => {
         const deciding = busyTarget === medication.id;
         return <div className="request-card highlighted" key={medication.id}>
-          <div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · {medication.name}</small></div><span>Now</span></div>
+          <div className="request-top"><MariaAvatarButton onOpen={openQuickProfile} /><div><strong>Maria Lopez</strong><small>Refill · {medication.name}</small></div><span>Now</span></div>
           <p>{medication.instructions} Last filled {medication.lastFilled}.</p>
           <div className="request-actions">
             <button className="reject" onClick={() => onDeclineRefill(medication.id)} disabled={busyAction !== null} aria-label={`Decline the refill for ${medication.name}`}>{deciding && busyAction === "decline-refill" ? "Declining…" : "Decline"}</button>
@@ -1344,12 +1432,13 @@ function StaffRequests({ demo, busyAction, busyTarget, onApproveRefill, onDeclin
         </div>;
       })}
       {decided.map(medication => <div className="request-card" key={medication.id}>
-        <div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Refill · {medication.name}</small></div><span>Reviewed</span></div>
+        <div className="request-top"><MariaAvatarButton onOpen={openQuickProfile} /><div><strong>Maria Lopez</strong><small>Refill · {medication.name}</small></div><span>Reviewed</span></div>
         <p>{medication.refillStatus === "approved" ? "Request approved · The patient can see the update in the portal." : "Request declined · The patient may submit another request."}</p>
       </div>)}
-      {intakeSubmission !== null && <div className="request-card highlighted" aria-label="Maria Lopez submitted intake form"><div className="request-top"><span className="patient-avatar">ML</span><div><strong>Maria Lopez</strong><small>Pre-visit questions · Patient portal</small></div><span>Now</span></div><p>Submitted {intakeSubmission.submittedAt}.</p><button className="text-action" onClick={() => setActiveModal("intake-review")}>Review form <Icon name="arrow-right" size={13} /></button></div>}
+      {intakeSubmission !== null && <div className="request-card highlighted" aria-label="Maria Lopez submitted intake form"><div className="request-top"><MariaAvatarButton onOpen={openQuickProfile} /><div><strong>Maria Lopez</strong><small>Pre-visit questions · Patient portal</small></div><span>Now</span></div><p>Submitted {intakeSubmission.submittedAt}.</p><button className="text-action" onClick={() => setActiveModal("intake-review")}>Review form <Icon name="arrow-right" size={13} /></button></div>}
     </section>
     {activeModal === "intake-review" && intakeSubmission && <IntakeReviewModal intakeSubmission={intakeSubmission} onClose={() => closeModal()} />}
+    {activeModal === "patient-search" && <PatientSearchModal demo={demo} initialPatient={quickProfile} onOpenSummary={openSummary} onClose={() => closeModal()} />}
   </div>;
 }
 
@@ -1379,13 +1468,13 @@ function AppointmentReviewModal({ appointmentStatus, appointmentTime, appointmen
   return <Modal labelledBy="appointment-review-title" dismissOnBackdrop onClose={onClose}><p className="eyebrow">PATIENT PORTAL BOOKING</p><h2 id="appointment-review-title">Appointment details</h2><p>This appointment was booked by Maria Lopez and is part of the shared clinic schedule.</p><dl className="review-details"><div><dt>Patient</dt><dd>Maria Lopez</dd></div><div><dt>Date and time</dt><dd>July 24 · {formatAppointmentTime(appointmentTime)}</dd></div><div><dt>Provider</dt><dd>{appointmentProvider ?? "Dr. Ana Costa"}</dd></div><div><dt>Visit type</dt><dd>{(appointmentSpecialty ?? "Primary Care")} · Follow-up</dd></div><div><dt>Status</dt><dd><span className="review-status">{appointmentStatusLabel(appointmentStatus)}</span></dd></div></dl>{nextAction && <button className="primary-button full" disabled={busyAction !== null} onClick={() => void onAdvance(nextAction.action)}>{busyAction === nextAction.action ? "Saving…" : nextAction.label}</button>}{canMarkNoShow && <div className="modal-danger-zone"><strong>Patient did not arrive?</strong><button className="danger-button full" disabled={busyAction !== null} onClick={() => void onAdvance("no-show-appointment")}>{busyAction === "no-show-appointment" ? "Saving…" : "Mark as did not attend"}</button></div>}<button className="secondary-button full" onClick={onOpenSummary}>Open visit summary</button><button className="secondary-button full" onClick={onClose}>Close</button></Modal>;
 }
 
-function PatientSearchModal({ demo, onOpenSummary, onClose }: { demo: DemoState; onOpenSummary: () => void; onClose: () => void }) {
+function PatientSearchModal({ demo, initialPatient = null, onOpenSummary, onClose }: { demo: DemoState; initialPatient?: PatientProfile | null; onOpenSummary: () => void; onClose: () => void }) {
   const { appointmentStatus, appointmentTime, intakeSubmission, insurance, statement } = demo;
   const intakeComplete = intakeSubmission !== null;
   const pendingRefills = countPendingRefills(demo);
   const newResults = countNewResults(demo);
   const [query, setQuery] = useState("");
-  const [selectedPatient, setSelectedPatient] = useState<PatientProfile | null>(null);
+  const [selectedPatient, setSelectedPatient] = useState<PatientProfile | null>(initialPatient);
   const results = patientProfiles.filter(patient =>
     patient.name.toLowerCase().includes(query.trim().toLowerCase()),
   );

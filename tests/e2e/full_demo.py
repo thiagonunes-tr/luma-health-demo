@@ -221,6 +221,73 @@ def sign_in(page: Page, role: str, email: str, password: str) -> None:
   page.get_by_role("heading", name=heading).wait_for()
 
 
+def verify_tooltips(page: Page) -> None:
+  """A tooltip describes, is reachable by keyboard, and dismisses with Escape.
+
+  It arrived as a request for hover text. Hover-only would be unreachable by
+  keyboard and undismissable (WCAG 2.1 1.4.13), and an `aria-label` on a wrapper
+  would have replaced the control's own name, so it ships wider than asked: the
+  bubble opens on keyboard focus too, Escape hides it without closing the page
+  behind it, and it is wired with `aria-describedby`.
+  """
+  switch = page.get_by_role("switch", name="Dark mode")
+  assert switch.get_attribute("aria-describedby") is None, (
+    "the tooltip is described before anything pointed at it"
+  )
+
+  switch.hover()
+  tip = page.locator(".tooltip")
+  tip.wait_for()
+  assert switch.get_attribute("aria-describedby") == tip.get_attribute("id")
+  assert tip.inner_text().startswith("Switch to the ")
+  # Described, never named: the switch keeps the name it had.
+  assert switch.get_attribute("aria-label") == "Dark mode"
+  page.mouse.move(0, 0)
+  tip.wait_for(state="detached")
+
+  # The keyboard path, and Escape on it.
+  page.evaluate("() => document.activeElement instanceof HTMLElement && document.activeElement.blur()")
+  for _ in range(40):
+    page.keyboard.press("Tab")
+    if page.evaluate("() => document.activeElement?.getAttribute('role') === 'switch'"):
+      break
+  else:
+    raise AssertionError("the theme switch is not reachable by keyboard")
+  tip.wait_for()
+  page.keyboard.press("Escape")
+  tip.wait_for(state="detached")
+  # Escape dismissed the tooltip and nothing else: the theme did not toggle and
+  # the page is still here.
+  assert switch.get_attribute("aria-checked") == "false"
+  page.get_by_role("heading", name="Good morning, Daniel.").wait_for()
+
+
+def verify_logo_goes_home(page: Page, home: str) -> None:
+  """The logo a reviewer clicked. Both marks go to the role's home destination."""
+  sidebar(page, "Requests")
+  page.get_by_role("heading", name="Requests", exact=True).wait_for()
+  page.get_by_role("button", name=f"Luma Health — back to {home}").click()
+  page.get_by_role("heading", name="Good morning, Daniel.").wait_for()
+
+
+def verify_avatar_quick_profile(page: Page) -> None:
+  """Patient initials open that patient's card, not the generic directory.
+
+  The schedule holds five different patients, so the assertion has to be that
+  the avatar carried its own identity through - opening the directory on
+  whoever happened to be first would pass a weaker check.
+  """
+  page.get_by_role("button", name="Quick profile for Riley Smith").click()
+  dialog = page.get_by_role("dialog", name="Riley Smith")
+  dialog.wait_for()
+  dialog.get_by_text("March 30, 1995", exact=True).wait_for()
+  # And it is the directory dialog, so the rest of it is still reachable.
+  dialog.get_by_role("button", name="Back to results").click()
+  page.get_by_role("dialog", name="Search patients").wait_for()
+  page.locator(".patient-search-modal").get_by_role("button", name="Close").last.click()
+  page.locator(".modal-backdrop").wait_for(state="detached")
+
+
 def verify_patient_search(page: Page) -> None:
   """The patient directory: a surface the gate never opened until it broke.
 
@@ -281,7 +348,9 @@ def sign_out(page: Page) -> None:
 
 
 def sidebar(page: Page, item: str) -> None:
-  page.locator(".sidebar").get_by_role("button", name=item).click()
+  # Scoped to the nav list, not the whole sidebar: the logo is a button now too,
+  # and its label names the home destination, so "Home" matched both.
+  page.locator(".sidebar .nav-item").filter(has_text=item).click()
 
 
 def download_summary(page: Page) -> None:
@@ -436,10 +505,10 @@ def run_scenario(page: Page) -> None:
   page.locator(".time-options label").filter(has_text="9:00 AM").click()
   page.get_by_role("button", name="Save new time").click()
   page.get_by_text("Appointment rescheduled", exact=True).wait_for()
-  page.locator(".sidebar").get_by_role("button", name="Appointments").click()
+  sidebar(page, "Appointments")
   page.get_by_text("Cardiology · Follow-up", exact=True).wait_for()
   page.get_by_text("Dr. John Lima · Room 204", exact=True).wait_for()
-  page.locator(".sidebar").get_by_role("button", name="Home").click()
+  sidebar(page, "Home")
   page.get_by_role("button", name="Manage appointment", exact=True).click()
   page.locator(".time-options label").filter(has_text="3:00 PM").click()
   page.get_by_role("button", name="Save new time").click()
@@ -584,6 +653,9 @@ def run_scenario(page: Page) -> None:
 
   sidebar(page, "Today")
   audit_surface(page, "staff · today")
+  verify_tooltips(page)
+  verify_logo_goes_home(page, "Today")
+  verify_avatar_quick_profile(page)
   verify_patient_search(page)
 
   # The portal appointment used to be spliced into the schedule at a fixed
@@ -634,7 +706,7 @@ def run_scenario(page: Page) -> None:
   ).get_by_text("No request", exact=True).wait_for()
   sidebar(page, "Home")
   # The unread badge counts messages from the other role, not the thread length.
-  page.locator(".sidebar").get_by_role("button", name="Messages 1").wait_for()
+  page.locator(".sidebar .nav-item").filter(has_text="Messages1").wait_for()
   sidebar(page, "Messages")
   page.get_by_text(
     "Yes, please bring the current medication list."

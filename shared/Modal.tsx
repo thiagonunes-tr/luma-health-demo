@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { Icon } from "./Icon";
+import { useTooltip } from "./Tooltip";
 
 const FOCUSABLE = [
   "a[href]",
@@ -40,6 +41,9 @@ export function Modal({
 }) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
+  // The close button is an icon with an aria-label and nothing on screen. Say
+  // what it does for the people the aria-label does not reach.
+  const closeTip = useTooltip("Close this dialog", "below-end");
 
   /**
    * Escape and the close button used to discard typed input silently. Ask only
@@ -152,12 +156,14 @@ export function Modal({
         onKeyDown={handleKeyDown}
       >
         <button
-          className="modal-close"
+          className="modal-close has-tooltip"
           onClick={requestClose}
           aria-label="Close"
           disabled={closeDisabled}
+          {...closeTip.triggerProps}
         >
           <Icon name="close" size={18} />
+          {closeTip.tip}
         </button>
         {children}
       </div>

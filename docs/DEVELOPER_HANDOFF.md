@@ -780,6 +780,14 @@ previous version 8/30). What that pass established, and what must not regress:
   a decorative unread dot with no data behind it, and a message badge that counted the reader's own
   sent messages.
 - **Touch targets are 44×44 minimum**, with a `@media (pointer: coarse)` block for the text buttons.
+- **Every control whose meaning is carried only by an icon or an `aria-label` gets a tooltip**
+  (`shared/Tooltip.tsx`): the theme switch, the dialog close button, the logo, and the patient
+  initials. `useTooltip` opens on keyboard focus as well as hover, dismisses with Escape without
+  closing the dialog behind it, and wires the text with `aria-describedby` so it never becomes the
+  control's accessible name. The bubble renders inside the trigger, not beside it, because several
+  triggers are grid items in a column sized for one box. Do not add a hover-only tooltip, and do not
+  use one to replace a label a sighted user needs — if the meaning is not guessable, write it on
+  screen.
 
 Automated enforcement: `npm run lint` runs the full `eslint-plugin-jsx-a11y` recommended set
 (34 rules, up from the 6 that `eslint-config-next` enables), and `npm run test:e2e` audits nine
